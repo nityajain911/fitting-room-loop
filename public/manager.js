@@ -95,6 +95,7 @@ function funnel(m) {
     <div class="funnel" role="img" aria-label="Outcomes of ${f.total} closed requests">${f.segments.map((s) => `<i style="width:${s.pct}%;background:${FUNNEL_COLOURS[s.key]}" title="${esc(outcomeLabel(s.key))}: ${s.count}"></i>`).join('')}</div>
     <div class="flegend">${f.segments.map((s) => `<span><i style="background:${FUNNEL_COLOURS[s.key]}"></i>${esc(outcomeLabel(s.key))} <strong>${s.count}</strong> (${Math.round(s.pct)}%)</span>`).join('')}</div>
     ${f.cancelled ? `<div class="small muted" style="margin-top:6px">+ ${f.cancelled} cancelled by the customer (not part of the bar)</div>` : ''}
+    ${m.continued ? `<div class="small muted" style="margin-top:6px">+ ${m.continued} continued in a follow-up request (counted by how the follow-up ended)</div>` : ''}
   </div>`;
 }
 

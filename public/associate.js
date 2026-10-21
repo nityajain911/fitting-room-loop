@@ -56,6 +56,7 @@ handlers['a-toggle'] = (el) => {
   rerender();
 };
 handlers['a-reject'] = (el) => post(`/api/requests/${el.dataset.v}/reject`, { role: lastRole });
+handlers['a-deliver'] = (el) => post(`/api/requests/${el.dataset.v}/deliver`, { role: lastRole });
 handlers['a-pull-cancel'] = (el) => post(`/api/tasks/${el.dataset.v}/cancel`, { role: lastRole });
 handlers['a-pull'] = (el) => post(`/api/requests/${el.dataset.v}/floor-pull`, { role: lastRole });
 handlers['a-close'] = (el) => post(`/api/requests/${el.dataset.v}/close`, { outcome: el.dataset.outcome, role: lastRole });
@@ -161,7 +162,7 @@ function identityBar(who) {
 const statusPill = (x) => {
   if (x.status === 'cancelled') return x.kind === 'task' ? '<span class="pill danger">Cancelled</span>' : '<span class="pill danger">Cancelled by customer</span>';
   if (x.kind === 'task') return x.status === 'done' ? '<span class="pill ok">Done</span>' : x.status === 'accepted' ? '<span class="pill ok">Accepted</span>' : '<span class="pill accent">New</span>';
-  return { requested: '<span class="pill accent">New</span>', accepted: '<span class="pill ok">Accepted</span>', on_the_way: '<span class="pill ok">On the way</span>', closed: `<span class="pill">${esc(outcomeLabel(x.outcome))}</span>` }[x.status];
+  return { requested: '<span class="pill accent">New</span>', accepted: '<span class="pill ok">Accepted</span>', on_the_way: x.deliveredTs != null ? '<span class="pill ok">Trying on</span>' : '<span class="pill ok">On the way</span>', closed: `<span class="pill">${esc(outcomeLabel(x.outcome))}</span>` }[x.status];
 };
 
 function assistCard(x) {
@@ -284,7 +285,7 @@ function urgentDetail(r, role) {
       ${opts.map((o) => `<div class="bring-line"><span><strong>${esc(optionName(sku, o))}</strong></span>${rackPill(o.rack)}</div>`).join('')}
       <button class="btn primary block xl" style="margin-top:12px" data-action="a-confirm" data-v="${esc(r.id)}">Confirm &amp; bring${opts.length > 1 ? ` all ${opts.length}` : ''}</button>`;
   } else if (stage3) {
-    action = `${trip.length ? `<div class="trip-head">On the way: ${esc(trip.map((o) => optionName(sku, o)).join(' · '))}</div>` : ''}${closeBlock(r)}`;
+    action = `${trip.length ? `<div class="trip-head">${r.deliveredTs != null ? 'Handed over' : 'On the way'}: ${esc(trip.map((o) => optionName(sku, o)).join(' · '))}</div>` : ''}${onWay ? tripEnd(r) : closeBlock(r)}`;
   }
   return `
     <div class="head">${ringHtml(r, 64)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')} <span class="esc-tag">ESCALATED</span></div></div>
@@ -317,7 +318,7 @@ function normalDetail(r, role, withHead) {
     ${pre ? `${issueSection(r, info, true)}
       <button class="btn primary block" style="margin-top:12px" data-action="a-accept" data-v="${esc(r.id)}" data-role="${esc(r.assistedBy === role ? role : r.route.role)}">Accept request</button>` : ''}
     ${r.suggestion ? suggestionBlock(r, sku, role, onWay && !r.itemDeclined) : ''}
-    ${open ? (stage3 ? closeBlock(r) : `<div style="text-align:right"><button class="back" data-action="a-left-early" data-v="${esc(r.id)}">Customer left early</button></div>`) : ''}
+    ${open ? (stage3 ? (onWay ? tripEnd(r) : closeBlock(r)) : `<div style="text-align:right"><button class="back" data-action="a-left-early" data-v="${esc(r.id)}">Customer left early</button></div>`) : ''}
     ${r.status === 'closed' ? `<div class="banner good">Closed: <strong>${esc(outcomeLabel(r.outcome))}</strong> · ${esc(fmtDur(r.closedTs - r.createdTs))} from request</div>` : ''}
     ${!pre ? (showReason ? reasonBlock(r) : '') + issueSection(r, info, false) : ''}`;
 }
@@ -509,6 +510,22 @@ function suggestionBlock(r, sku, role, compact = false) {
       ${fallbackHead}${struckHtml}${body}${actions}
       ${pullBtn}${tasks}
     </div>`;
+}
+
+/**
+ * Once the items are confirmed: hand them over (that stops the delivery timer and starts the customer's try-on), and
+ * only then the outcome. The customer's own word on the fit is shown, but the staff still close the request.
+ */
+function tripEnd(r) {
+  if (r.deliveredTs == null) {
+    return `<button class="btn primary block xl" style="margin-top:12px" data-action="a-deliver" data-v="${esc(r.id)}">Handed to customer</button>
+      <div class="small muted" style="margin-top:6px">Stops the delivery timer. The customer tries it on and tells us how it fits.</div>
+      <div style="text-align:right"><button class="back" data-action="a-left-early" data-v="${esc(r.id)}">Customer left early</button></div>`;
+  }
+  const say = !r.tryOn ? '<div class="small muted">Customer is trying it on…</div>'
+    : r.tryOn.result === 'fits' ? '<div class="banner good"><strong>Customer says it fits 👍</strong> Close it when they decide.</div>'
+      : '<div class="banner info"><strong>Customer says it is still not right 🔄</strong> A follow-up request will come from the room.</div>';
+  return `${say}${closeBlock(r)}`;
 }
 
 function closeBlock(r) {

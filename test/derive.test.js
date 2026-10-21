@@ -387,6 +387,8 @@ test('stage: waiting to be accepted, then waiting to be delivered, then none', (
   add(30_000, 'r1', 'accepted', { role: 'runner' });
   assert.equal(stageOf(deriveAll(events).byId.r1), 'deliver');
   add(50_000, 'r1', 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'x' });
+  assert.equal(stageOf(deriveAll(events).byId.r1), 'deliver'); // set off, not yet handed over
+  add(60_000, 'r1', 'delivered', {}, 'runner');
   assert.equal(stageOf(deriveAll(events).byId.r1), null);
 });
 
@@ -419,7 +421,9 @@ test('an escalation clears when the request is accepted, and the next stage esca
   assert.equal(r.escalatedStage, 'deliver');
   assert.deepEqual(r.escalations.map((x) => x.stage), ['accept', 'deliver']);
   add(200_000, 'r1', 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'x' });
-  assert.equal(deriveAll(events).byId.r1.escalated, false); // delivered: clear again
+  assert.equal(deriveAll(events).byId.r1.escalated, true);  // set off is not delivered: still escalated
+  add(205_000, 'r1', 'delivered', {}, 'runner');
+  assert.equal(deriveAll(events).byId.r1.escalated, false); // handed over: clear again
 });
 
 test('legacy escalated events without a stage are placed by the status at the time', () => {
@@ -480,4 +484,58 @@ test('a cancelled floor pull is not open, is not done, and keeps its parent', ()
   assert.deepEqual(buildQueue('floor', d, 10), []); // gone from the floor queue
   add(4, 't1', 'floor_pull_done', {}); // a late event cannot revive it
   assert.equal(deriveAll(events).byId.t1.status, 'cancelled');
+});
+
+// ---------- delivered, try-on feedback, follow-ups ----------
+const onWay = (add, id = 'r1') => {
+  add(0, id, 'created', { room: 1, skuId: 'OX-L-SLIM', issue: 'too_tight', chips: [], parsed: null, method: 'none' });
+  add(0, id, 'routed', { role: 'runner', rule: 'x' });
+  add(10_000, id, 'accepted', { role: 'runner' });
+  add(20_000, id, 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'Oxford' });
+};
+
+test('the delivery stage lasts until the item is handed to the customer, not until the runner sets off', () => {
+  const { events, add } = makeLog();
+  onWay(add);
+  assert.equal(stageOf(deriveAll(events).byId.r1), 'deliver');         // on the way, not yet handed over
+  const lim = makeConfig({ DELIVER_ESCALATE_SECONDS: '60' });
+  assert.equal(cardState(deriveAll(events).byId.r1, 75_000, lim), 'escalated'); // 65 s since accept
+  add(30_000, 'r1', 'delivered', {}, 'runner');
+  const r = deriveAll(events).byId.r1;
+  assert.equal(r.deliveredTs, 30_000);
+  assert.equal(r.status, 'on_the_way');                                // the request stays open: the customer is trying it on
+  assert.equal(stageOf(r), null);
+  const t = timerFor(r, 999_000, config);
+  assert.deepEqual([t.startTs, t.endTs], [10_000, 30_000]);            // frozen at the delivery time
+});
+
+test('an escalation of the delivery stage clears when the item is handed over, not when it is confirmed', () => {
+  const { events, add } = makeLog();
+  onWay(add);
+  add(130_000, 'r1', 'escalated', { level: 1, stage: 'deliver' });
+  assert.equal(deriveAll(events).byId.r1.escalated, true);
+  add(140_000, 'r1', 'delivered', {}, 'runner');
+  assert.equal(deriveAll(events).byId.r1.escalated, false);
+});
+
+test('a withdrawn trip is not delivered; try-on feedback and follow-ups are derived', () => {
+  const { events, add } = makeLog();
+  onWay(add);
+  add(30_000, 'r1', 'delivered', {}, 'runner');
+  add(60_000, 'r1', 'tryon_feedback', { result: 'not_right' }, 'customer');
+  add(70_000, 'r2', 'created', { room: 1, skuId: 'OX-M-REG', issue: 'too_loose', chips: [], parsed: null, method: 'none', followsId: 'r1' }, 'customer');
+  const d = deriveAll(events);
+  assert.deepEqual([d.byId.r1.tryOn.result, d.byId.r1.tryOn.ts], ['not_right', 60_000]);
+  assert.equal(d.byId.r2.followsId, 'r1');
+  assert.equal(d.byId.r1.tryOn && d.byId.r2.tryOn, null);
+  add(80_000, 'r1', 'inventory_discrepancy', { skuId: 'OX-M-REG', rack: 'A4' });
+  assert.equal(deriveAll(events).byId.r1.deliveredTs, null);           // nothing is on its way any more
+});
+
+test('the customer steps say Delivered once the item has been handed over', () => {
+  const { events, add } = makeLog();
+  onWay(add);
+  assert.match(customerSteps(deriveAll(events).byId.r1)[2].label, /^On the way to Room 1/);
+  add(30_000, 'r1', 'delivered', {}, 'runner');
+  assert.match(customerSteps(deriveAll(events).byId.r1)[2].label, /^Delivered to Room 1/);
 });

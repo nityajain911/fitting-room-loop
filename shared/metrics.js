@@ -2,7 +2,7 @@
 import { deriveAll, isOpen } from './derive.js';
 import { CATALOGUE, getSku, skuLabel } from './catalogue.js';
 import { mergeIssue } from './fitMatch.js';
-import { OUTCOMES, SAVE_OUTCOMES, EVIDENCE_TYPES, ISSUES, FIT_ISSUES } from './events.js';
+import { OUTCOMES, CONTINUED, SAVE_OUTCOMES, EVIDENCE_TYPES, ISSUES, FIT_ISSUES } from './events.js';
 import { DEFAULTS } from './config.js';
 
 export function median(nums) {
@@ -17,7 +17,8 @@ const ratio = (n, d) => (d > 0 ? n / d : null);
 export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
   const { requests, tasks, discrepancies } = deriveAll(events);
 
-  const closedReqs = requests.filter((r) => r.status === 'closed');
+  const continuedReqs = requests.filter((r) => r.status === 'closed' && r.outcome === CONTINUED);
+  const closedReqs = requests.filter((r) => r.status === 'closed' && r.outcome !== CONTINUED);
   const saves = closedReqs.filter((r) => SAVE_OUTCOMES.includes(r.outcome)).length;
   const deferred = closedReqs.filter((r) => r.outcome === 'saved_for_later').length;
 
@@ -94,7 +95,13 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     saveRate: ratio(saves, closedReqs.length),
     deferredRate: ratio(deferred, closedReqs.length),
     medianAcceptMs: median(requests.filter((r) => r.acceptedTs != null).map((r) => r.acceptedTs - r.createdTs)),
-    medianDeliverMs: median(requests.filter((r) => r.acceptedTs != null && r.onTheWayTs != null).map((r) => r.onTheWayTs - r.acceptedTs)),
+    medianDeliverMs: median(requests.filter((r) => r.acceptedTs != null && r.deliveredTs != null).map((r) => r.deliveredTs - r.acceptedTs)),
+    medianDispatchMs: median(requests.filter((r) => r.acceptedTs != null && r.onTheWayTs != null).map((r) => r.onTheWayTs - r.acceptedTs)),
+    medianTryOnMs: median(closedReqs.filter((r) => r.deliveredTs != null).map((r) => r.closedTs - r.deliveredTs)),
+    delivered: requests.filter((r) => r.deliveredTs != null).length,
+    tryOn: { fits: requests.filter((r) => r.tryOn?.result === 'fits').length, notRight: requests.filter((r) => r.tryOn?.result === 'not_right').length },
+    continued: continuedReqs.length,
+    followUps: requests.filter((r) => r.followsId).length,
     medianCloseMs: median(closedReqs.map((r) => r.closedTs - r.createdTs)),
     escalations: requests.filter((r) => r.escalations.length).length,
     floorTaskEscalations: tasks.filter((t) => t.escalations.length).length,

@@ -14,7 +14,7 @@ import { tripItemName } from '/shared/visuals.js';
 const ROOMS = [1, 2, 3, 4, 5, 6, 7, 8];
 let roomLocked = false;  // the room came from the URL (one QR code per fitting-room door)
 let pickingRoom = false; // the customer tapped "Change"
-const blank = () => ({ dept: 'Men', name: null, styleName: null, colour: null, size: null, cut: null, issues: [], chips: new Set(), styleAxes: new Set(), busy: false });
+const blank = () => ({ dept: 'Men', name: null, styleName: null, colour: null, size: null, cut: null, followsId: null, issues: [], chips: new Set(), styleAxes: new Set(), busy: false });
 const form = { room: null, ...blank() };
 /** Start a fresh request: everything is cleared except the room, which stays locked. */
 const resetForm = () => Object.assign(form, blank());
@@ -104,6 +104,11 @@ handlers['c-new'] = (el) => {
   location.hash = room ? `#customer?room=${room}` : '#customer';
   hooks.render();
 };
+handlers['c-tryon'] = async (el) => {
+  const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: el.dataset.result }));
+  if (out && el.dataset.result === 'not_right') location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`;
+};
+handlers['c-another'] = (el) => { location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`; };
 handlers['c-decline'] = (el) => act(() => api('POST', `/api/requests/${el.dataset.v}/decline-item`));
 handlers['c-cancel'] = async (el) => {
   if (!confirm('Cancel this request? The team will be told you no longer need help.')) return;
@@ -116,7 +121,7 @@ handlers['c-submit'] = async () => {
   form.busy = true;
   hooks.render();
   const out = await act(() => api('POST', '/api/requests', {
-    room: form.room, skuId: sku.id, issues: [...form.issues], chips: [...form.chips],
+    room: form.room, skuId: sku.id, issues: [...form.issues], chips: [...form.chips], ...(form.followsId ? { followsId: form.followsId } : {}),
     styleAxes: form.issues.includes('another_style') ? [...form.styleAxes] : [], text,
   }));
   form.busy = false;
@@ -130,10 +135,20 @@ handlers['c-submit'] = async () => {
   }
 };
 
+/** "Still not right, try another": the form starts from the item that was handed over (the first of the trip). */
+function startFollowUp(id) {
+  const r = S.derived.byId[id];
+  const sku = r?.onTheWay?.items?.length ? getSku(r.onTheWay.items[0].itemId) : null;
+  if (!sku || !isOpen(r)) return;
+  Object.assign(form, { ...blank(), room: r.room, dept: sku.department ?? 'Men', name: sku.name, styleName: sku.styleName ?? null, colour: sku.colour, size: sku.size, cut: sku.cut, followsId: id });
+}
+
 export function render({ args, query }) {
   const n = Number(query?.get('room'));
   roomLocked = Number.isInteger(n) && n >= 1 && n <= 99;
   if (roomLocked) form.room = n;
+  const from = query?.get('from');
+  if (from && form.followsId !== from && !args[0]) startFollowUp(from);
   return args[0] ? tracker(args[0]) : formView();
 }
 
@@ -171,6 +186,7 @@ function formView() {
   const open = form.room ? roomOpen(form.room) : [];
   return `
     <div class="row"><h1>What's not working?</h1><span class="badge-anon">🔒 Anonymous</span></div>
+    ${form.followsId && S.derived.byId[form.followsId] ? `<div class="banner info">Following up on the item we brought: <strong>${esc(itemName(S.derived.byId[form.followsId].onTheWay?.items?.[0]?.itemId))}</strong>. Change the size or cut if you tried another, then tell us what is still not right. <a href="#customer/${esc(form.followsId)}">Cancel</a></div>` : ''}
     ${open.length ? `<a class="back-link" href="#customer/${esc(open[open.length - 1].id)}">✕ Cancel — back to your request${open.length > 1 ? 's' : ''}</a>` : ''}
 
     ${form.room && !pickingRoom ? roomBar() : `<h2>Fitting room</h2><div class="opts">${ROOMS.map((r) => opt('c-room', r, `Room ${r}`, form.room === r)).join('')}</div>`}
@@ -207,12 +223,16 @@ function stepper(r, steps, cancelled) {
   let current = 0;
   steps.forEach((s, i) => { if (s.reached) current = i; });
   return `<ol class="hstep">${steps.map((s, i) => `<li class="${s.reached ? 'reached' : ''} ${i === current && !cancelled ? 'current' : ''}">
-    <span class="dot">${s.reached ? '✓' : ''}</span><span class="lbl">${esc(SHORT_STEPS[s.key])}</span></li>`).join('')}</ol>`;
+    <span class="dot">${s.reached ? '✓' : ''}</span><span class="lbl">${esc(s.key === 'on_the_way' && r.deliveredTs != null ? 'Delivered' : SHORT_STEPS[s.key])}</span></li>`).join('')}</ol>`;
 }
 
 /** The live "what is coming" box: waiting, checking stock, then every item on the trip. */
 function incoming(r) {
   if (r.status === 'cancelled') return `<div class="banner alert">You cancelled this request ${esc(STAGE_TEXT[r.cancelStage] || '')}. Nothing more is needed.</div>`;
+  if (r.status === 'closed' && r.outcome === 'continued') {
+    const next = S.derived.requests.find((x) => x.followsId === r.id);
+    return `<div class="incoming done">We're on it with your new request.${next ? ` <a href="#customer/${esc(next.id)}">See it</a>` : ''}</div>`;
+  }
   if (r.status === 'closed') return '<div class="incoming done">All done. Thanks for letting us help.</div>';
   if (r.status === 'requested') return '<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>';
   if (r.status === 'accepted' || !r.onTheWay) return '<div class="incoming wait"><span class="spin"></span>Checking stock…</div>';
@@ -226,13 +246,28 @@ function incoming(r) {
       <div class="small muted">${esc(itemName(id))}</div>${why ? `<div class="small">Chosen for ${esc(why)}</div>` : ''}</div>`;
   };
   return `<div class="incoming bring">
-    <div class="small muted" style="letter-spacing:.6px;font-weight:700">${many ? `BRINGING ${trip.length} ITEMS` : 'BRINGING'} TO ROOM ${esc(r.room)}</div>
+    <div class="small muted" style="letter-spacing:.6px;font-weight:700">${r.deliveredTs != null ? (many ? `${trip.length} ITEMS DELIVERED` : 'DELIVERED') : (many ? `BRINGING ${trip.length} ITEMS` : 'BRINGING')} TO ROOM ${esc(r.room)}</div>
     ${many ? '<div class="small muted" style="margin:2px 0 6px">Try them all; keep the one that fits.</div>' : ''}
     ${trip.map(item).join('')}
-    ${r.itemDeclined
-      ? '<div class="small" style="margin-top:8px;color:var(--warn)">Thanks — we told the team you don\'t want these. They\'ll bring something else.</div>'
-      : `<button class="btn small-btn" data-action="c-decline" data-v="${esc(r.id)}">${many ? 'None of these' : 'Not this one'}</button>`}
+    ${r.deliveredTs != null ? tryOnBlock(r, many)
+      : r.itemDeclined
+        ? '<div class="small" style="margin-top:8px;color:var(--warn)">Thanks — we told the team you don\'t want these. They\'ll bring something else.</div>'
+        : `<button class="btn small-btn" data-action="c-decline" data-v="${esc(r.id)}">${many ? 'None of these' : 'Not this one'}</button>`}
   </div>`;
+}
+
+/** After the item has been handed over: how does it fit? A statement from the customer, never an outcome. */
+function tryOnBlock(r, many) {
+  if (r.tryOn?.result === 'fits') return '<div class="small" style="margin-top:10px">Glad it fits! The team will wrap up with you.</div>';
+  if (r.tryOn?.result === 'not_right') {
+    return `<div class="small" style="margin-top:10px">Thanks, let's find another.</div>
+      <button class="btn primary block" style="margin-top:8px" data-action="c-another" data-v="${esc(r.id)}">Tell us what's still not right</button>`;
+  }
+  return `<div style="margin-top:10px"><strong>How does ${many ? 'the one you kept' : 'the new one'} fit?</strong></div>
+    <div class="btn-grid" style="margin-top:8px">
+      <button class="btn primary" data-action="c-tryon" data-result="fits" data-v="${esc(r.id)}">👍 Fits great</button>
+      <button class="btn" data-action="c-tryon" data-result="not_right" data-v="${esc(r.id)}">🔄 Still not right</button>
+    </div>`;
 }
 
 /** Other open requests from this room as compact cards, read from the shared log (a room number is not personal data). */

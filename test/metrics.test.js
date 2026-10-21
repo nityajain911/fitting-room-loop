@@ -377,3 +377,37 @@ test('floor pulls: cancelled ones are counted apart, not as requested or done', 
   const m = computeMetrics(events);
   assert.deepEqual([m.floorPullsRequested, m.floorPullsDone, m.floorPullsCancelled], [1, 1, 1]);
 });
+
+// ---------- delivered / try-on / follow-ups ----------
+test('delivery is accept to handed over; set-off and try-on times are separate; try-on feedback is counted', () => {
+  const { events, add } = makeLog();
+  const trip = (id, accepted, onWayAt, deliveredAt, closedAt, tryOn) => {
+    mk(add, id, 0); add(accepted, id, 'accepted', { role: 'runner' });
+    add(onWayAt, id, 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' });
+    if (deliveredAt) add(deliveredAt, id, 'delivered', {}, 'runner');
+    if (tryOn) add(deliveredAt + 1, id, 'tryon_feedback', { result: tryOn }, 'customer');
+    if (closedAt) add(closedAt, id, 'closed', { outcome: 'bought_alternative' });
+  };
+  trip('a', 10_000, 20_000, 50_000, 170_000, 'fits');
+  trip('b', 0, 10_000, 70_000, 250_000, 'not_right');
+  trip('c', 5_000, 8_000, null, null, null);                     // set off but not handed over yet
+  const m = computeMetrics(events);
+  assert.equal(m.medianDeliverMs, 55_000);                       // accept -> handed over: 40 s and 70 s
+  assert.equal(m.medianDispatchMs, 10_000);                      // accept -> on the way: 10 s, 10 s, 3 s
+  assert.equal(m.medianTryOnMs, 150_000);                        // delivered -> closed: 120 s and 180 s
+  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1 });
+  assert.equal(m.delivered, 2);
+});
+
+test('a request continued in a follow-up is not a lost sale and not a sale: it leaves the save-rate denominator', () => {
+  const { events, add } = makeLog();
+  mk(add, 'first', 0); add(1, 'first', 'accepted', { role: 'runner' });
+  add(2, 'first', 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' }); add(3, 'first', 'delivered', {}, 'runner');
+  add(4, 'first', 'closed', { outcome: 'continued', followedBy: 'second' });
+  mk(add, 'second', 5, { followsId: 'first' }); add(6, 'second', 'accepted', { role: 'runner' }); add(7, 'second', 'closed', { outcome: 'bought_alternative' });
+  const m = computeMetrics(events);
+  assert.equal(m.closed, 1);
+  assert.equal(m.saveRate, 1);       // the chain counted once, by how it ended
+  assert.equal(m.continued, 1);
+  assert.equal(m.followUps, 1);
+});

@@ -2,7 +2,7 @@
 export const EVENT_TYPES = [
   'created', 'routed', 'accepted', 'suggestion_shown', 'suggestion_confirmed',
   'suggestion_rejected', 'on_the_way', 'floor_pull_requested', 'floor_pull_done',
-  'escalated', 'closed', 'cancelled', 'reason_added', 'inventory_discrepancy', 'item_declined', 'assisted', 'assigned', 'floor_pull_cancelled',
+  'escalated', 'closed', 'cancelled', 'reason_added', 'inventory_discrepancy', 'item_declined', 'assisted', 'assigned', 'floor_pull_cancelled', 'delivered', 'tryon_feedback',
 ];
 
 export const UNKNOWN = 'other/unknown';
@@ -51,6 +51,11 @@ export const OUTCOMES = {
   saved_for_later: 'Saved for later',
   left: 'Left',
 };
+// A request that was carried on in a follow-up ("still not right, try another") is closed with this; it is neither a
+// sale nor a loss, so it is left out of the closed counts and the follow-up carries the result.
+export const CONTINUED = 'continued';
+export const OUTCOME_LABELS = { ...OUTCOMES, [CONTINUED]: 'Continued in a follow-up request' };
+export const TRYON_RESULTS = ['fits', 'not_right'];
 export const SAVE_OUTCOMES = ['bought_original', 'bought_alternative', 'cross_store_order'];
 
 export const ROLES = { runner: 'Fitting-room runner', floor: 'Floor associate' };

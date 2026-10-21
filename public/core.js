@@ -1,7 +1,7 @@
 // Shared client state, API helper, formatting and render helpers.
 import { deriveAll, timerFor } from '/shared/derive.js';
 import { DEFAULTS } from '/shared/config.js';
-import { ISSUES, OUTCOMES, ROLES, REASON_LABELS, issuesLabel } from '/shared/events.js';
+import { ISSUES, OUTCOME_LABELS, ROLES, REASON_LABELS, issuesLabel } from '/shared/events.js';
 import { getSku, skuLabel } from '/shared/catalogue.js';
 import { slaRing, rackZone } from '/shared/visuals.js';
 
@@ -156,7 +156,7 @@ export function tickTimers() {
 export const issueLabel = (issue) => ISSUES[issue] || issue;
 /** All the issues a customer named for one article, e.g. "Too tight + Too short". Works on a request or an event payload. */
 export const issuesText = (x) => issuesLabel(x.issues?.length ? x.issues : [x.issue]);
-export const outcomeLabel = (o) => OUTCOMES[o] || o;
+export const outcomeLabel = (o) => OUTCOME_LABELS[o] || o;
 export const roleLabel = (r) => ROLES[r] || r;
 export const reasonLabel = (t) => REASON_LABELS[t] || t;
 export const itemName = (id) => {
@@ -200,6 +200,8 @@ export function describeEvent(e) {
     case 'suggestion_confirmed': return `Confirmed ${itemName(p.itemId)}`;
     case 'suggestion_rejected': return 'Suggestion rejected';
     case 'on_the_way': return `On the way to Room ${p.room}`;
+    case 'delivered': return 'Handed to the customer';
+    case 'tryon_feedback': return p.result === 'fits' ? 'Customer says it fits' : 'Customer says it is still not right';
     case 'floor_pull_requested': return `Floor pull: ${itemName(p.itemId)} (rack ${p.rack})`;
     case 'floor_pull_done': return 'Floor pull done';
     case 'floor_pull_cancelled': return p.reason === 'customer_declined' ? 'Floor pull cancelled: the customer declined the items' : `Floor pull cancelled by ${roleLabel(p.byRole)}`;

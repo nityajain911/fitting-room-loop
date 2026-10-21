@@ -8,7 +8,7 @@ import { createStore } from './store.js';
 import { makeLlm } from './llm.js';
 import { makeConfig } from '../shared/config.js';
 import { CATALOGUE, CATALOGUE_LABEL, getSku, skuLabel } from '../shared/catalogue.js';
-import { ISSUES, CHIPS, OUTCOMES, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
+import { ISSUES, CHIPS, OUTCOMES, CONTINUED, TRYON_RESULTS, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
 import { routeFor } from '../shared/routing.js';
 import { deriveAll, isOpen, effectiveCatalogue, excludedIds, stageOf, stageStart, stageLimits, ownerRole } from '../shared/derive.js';
 import { normaliseStaff, MAX_STAFF, nextAssignment, accessFor } from '../shared/staffing.js';
@@ -248,7 +248,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
 
   // ---- customer ----
   app.post('/api/requests', async (req, res) => {
-    const { room, skuId, chips = [], styleAxes = [], text = '' } = req.body || {};
+    const { room, skuId, chips = [], styleAxes = [], text = '', followsId = null } = req.body || {};
     const picked = req.body?.issues ?? (req.body?.issue ? [req.body.issue] : []); // one issue (older clients) or a list
     const roomNum = Number(room);
     if (!Number.isInteger(roomNum) || roomNum < 1 || roomNum > 99) throw bad('room must be a number 1-99');
@@ -260,15 +260,25 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     if (!Array.isArray(styleAxes) || styleAxes.some((a) => !ALL_STYLE_AXES.includes(a))) throw bad('Unknown style detail');
     if (typeof text !== 'string' || text.length > 500) throw bad('text must be a string of at most 500 characters');
 
+    // "Still not right, try another": a follow-up to a request whose item was handed over, in the same room.
+    let followed = null;
+    if (followsId != null) {
+      followed = derived().byId[followsId];
+      if (!followed || followed.kind !== 'request' || followed.room !== roomNum || followed.deliveredTs == null || followed.status !== 'on_the_way') throw bad('That request cannot be continued');
+    }
+
     // The raw text is parsed and dropped; only the structured result is logged.
     const parsed = await parseCustomerText(text, llmFor(req));
     const id = rid('r');
     append(id, 'created', 'customer', {
       room: roomNum, skuId, issue, issues, chips: [...new Set(chips)], parsed: parsed.fields, method: parsed.method,
       styleAxes: issue === 'another_style' ? [...new Set(styleAxes)] : [], // style details only mean something for "Another style"
+      ...(followed ? { followsId } : {}),
     });
     const route = routeFor(issue);
     append(id, 'routed', 'system', { role: route.role, rule: route.rule });
+    // The first request is carried on by this one: it is closed as "continued", so the result is counted once.
+    if (followed) append(followed.id, 'closed', 'system', { outcome: CONTINUED, followedBy: id });
     assignPending();
     res.json({ requestId: id, method: parsed.method });
   });
@@ -323,6 +333,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   app.post('/api/requests/:id/decline-item', (req, res) => {
     const r = getRequest(req.params.id);
     if (r.status !== 'on_the_way' || !r.onTheWay?.items?.length) throw conflict('No item is on its way');
+    if (r.deliveredTs != null) throw conflict('The item has already been handed over');
     if (r.itemDeclined) throw conflict('You already told us you do not want these');
     const ids = r.onTheWay.items.map((i) => i.itemId);
     append(r.id, 'item_declined', 'customer', { itemId: ids[0], itemIds: ids });
@@ -434,6 +445,26 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     if (r.status === 'cancelled') throw conflict('Request was cancelled by the customer');
     if (r.status === 'requested') throw conflict('Accept the request before closing it');
     append(r.id, 'closed', actorOf(req, r), { outcome });
+    res.json({ ok: true });
+  });
+
+  // The runner hands the item over: the delivery stage ends and the customer tries it on.
+  app.post('/api/requests/:id/deliver', (req, res) => {
+    const r = getRequest(req.params.id);
+    if (r.status !== 'on_the_way' || !r.onTheWay?.items?.length) throw conflict('Nothing is on its way to hand over');
+    if (r.deliveredTs != null) throw conflict('Already handed over');
+    append(r.id, 'delivered', actorOf(req, r), {});
+    res.json({ ok: true });
+  });
+
+  // The customer says how the item fits. A statement only: the staff still close the request with the real outcome.
+  app.post('/api/requests/:id/try-on', (req, res) => {
+    const r = getRequest(req.params.id);
+    const result = req.body?.result;
+    if (!TRYON_RESULTS.includes(result)) throw bad('result must be fits or not_right');
+    if (r.status !== 'on_the_way' || r.deliveredTs == null) throw conflict('The item has not been handed over yet');
+    if (r.tryOn) throw conflict('You already told us');
+    append(r.id, 'tryon_feedback', 'customer', { result });
     res.json({ ok: true });
   });
 

@@ -751,7 +751,9 @@ test('sweep escalates per stage: not accepted in time, then not delivered in tim
   assert.deepEqual(ev.filter((e) => e.type === 'escalated').map((e) => e.payload.stage), ['accept', 'deliver']);
   assert.deepEqual(computeMetrics(ev).openEscalations, [r]);
 
-  assert.equal((await s.call('POST', `/api/requests/${r}/confirm`, {})).status, 200); // on the way = delivered
+  assert.equal((await s.call('POST', `/api/requests/${r}/confirm`, {})).status, 200); // set off: not yet delivered
+  assert.deepEqual(computeMetrics(await s.events()).openEscalations, [r]);
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 200); // handed to the customer
   assert.deepEqual(computeMetrics(await s.events()).openEscalations, []);
   s.advance(500_000); s.sweep();
   assert.equal((await s.events()).filter((e) => e.type === 'escalated').length, 2);   // no third one
@@ -920,4 +922,62 @@ test('when the customer declines the items, any live pull for them is cancelled'
   const out = await confirmed(s, r, { pull: true, role: 'runner' });
   assert.equal((await s.call('POST', `/api/requests/${r}/decline-item`)).status, 200);
   assert.equal(deriveAll(await s.events()).byId[out.body.taskId].status, 'cancelled');
+});
+
+// ---------- delivered, try-on feedback, "try another" ----------
+const onTheWayReq = async (s, extra = {}) => {
+  const r = await oxReq(s, extra);
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  await s.call('POST', `/api/requests/${r}/confirm`, {});
+  return r;
+};
+
+test('handing the item over: only once it is on its way, once; the request stays open for the try-on', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await oxReq(s);
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 409); // not accepted
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 409); // nothing on its way yet
+  await s.call('POST', `/api/requests/${r}/confirm`, {});
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 200);
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 409); // already
+  const d = deriveAll(await s.events()).byId[r];
+  assert.deepEqual([d.status, d.deliveredTs != null], ['on_the_way', true]);
+  assert.equal((await s.call('POST', `/api/requests/${r}/decline-item`)).status, 409);               // too late to say "not this one"
+});
+
+test('try-on feedback: only after delivery, once, from the customer; it is a statement, not an outcome', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await onTheWayReq(s);
+  assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result: 'fits' })).status, 409);  // not delivered yet
+  await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
+  assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result: 'maybe' })).status, 400);
+  assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result: 'fits' })).status, 200);
+  assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result: 'fits' })).status, 409);  // once
+  const d = deriveAll(await s.events()).byId[r];
+  assert.equal(d.tryOn.result, 'fits');
+  assert.equal(d.status, 'on_the_way');                  // not closed: the staff close it with the real outcome
+  assert.equal(computeMetrics(await s.events()).closed, 0);
+});
+
+test('"try another": a follow-up request in the same room continues the first, which is closed as continued', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await onTheWayReq(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
+  await s.call('POST', `/api/requests/${r}/try-on`, { result: 'not_right' });
+  // validation: wrong room, unknown request, or something not yet delivered
+  const body = { skuId: 'OX-L-REG', issue: 'too_loose', chips: [], followsId: r };
+  assert.equal((await s.call('POST', '/api/requests', { ...body, room: 4 })).status, 400);
+  assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3, followsId: 'nope' })).status, 400);
+  const made = await s.call('POST', '/api/requests', { ...body, room: 3 });
+  assert.equal(made.status, 200);
+  const d = deriveAll(await s.events());
+  assert.equal(d.byId[made.body.requestId].followsId, r);
+  assert.deepEqual([d.byId[r].status, d.byId[r].outcome], ['closed', 'continued']);
+  const m = computeMetrics(await s.events());
+  assert.deepEqual([m.closed, m.continued, m.followUps], [0, 1, 1]);
+  assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3 })).status, 400); // already continued
 });

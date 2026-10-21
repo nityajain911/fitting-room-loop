@@ -24,7 +24,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
           escalated: false, escalatedTs: null, escalatedStage: null, escalations: [], assistLog: [], assistedNow: false,
           suggestion: null, suggestionState: null, confirmedItemId: null, confirmedItemIds: [],
-          onTheWay: null, onTheWayTs: null, reasons: [], floorTaskIds: [],
+          onTheWay: null, onTheWayTs: null, deliveredTs: null, tryOn: null, followsId: p.followsId ?? null, reasons: [], floorTaskIds: [],
           discrepancies: [], declinedIds: [], itemDeclined: null, assistedBy: null, assistedTs: null,
         };
         const sku = getSku(p.skuId, catalogue);
@@ -63,7 +63,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         r.suggestion = p;
         r.suggestionState = 'shown';
         if (r.itemDeclined) { // the customer declined the previous item: it is no longer on its way
-          r.itemDeclined = null; r.onTheWay = null; r.onTheWayTs = null; r.confirmedItemId = null;
+          r.itemDeclined = null; r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.confirmedItemId = null;
           if (r.status === 'on_the_way') r.status = 'accepted';
         }
         break;
@@ -83,9 +83,19 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         if (r) {
           r.onTheWay = { room: p.room, itemId: p.itemId, itemLabel: p.itemLabel, items: p.items || [{ itemId: p.itemId, itemLabel: p.itemLabel }] };
           r.onTheWayTs = e.ts;
+          r.deliveredTs = null;
           if (r.status !== 'closed' && r.status !== 'cancelled') r.status = 'on_the_way';
-          clearEscalation(r); // delivered
         }
+        break;
+      }
+      case 'delivered': {
+        const r = get(e.requestId);
+        if (r && r.kind === 'request' && r.status === 'on_the_way') { r.deliveredTs = e.ts; clearEscalation(r); }
+        break;
+      }
+      case 'tryon_feedback': {
+        const r = get(e.requestId);
+        if (r && r.kind === 'request' && r.deliveredTs != null) r.tryOn = { result: p.result, ts: e.ts };
         break;
       }
       case 'floor_pull_requested': {
@@ -139,7 +149,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           r.confirmedItemId = r.confirmedItemIds[0] ?? rest[0].itemId;
         } else {
           // nothing left to bring: withdraw until a new suggestion is shown
-          r.onTheWay = null; r.onTheWayTs = null; r.confirmedItemId = null; r.confirmedItemIds = []; r.suggestionState = 'withdrawn';
+          r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.confirmedItemId = null; r.confirmedItemIds = []; r.suggestionState = 'withdrawn';
           if (r.status === 'on_the_way') r.status = 'accepted';
         }
         break;
@@ -189,12 +199,13 @@ const endTs = (x) => (x.kind === 'task' ? x.doneTs : x.closedTs) ?? x.cancelledT
 
 export const elapsedMs = (x, now) => Math.max(0, (endTs(x) ?? now) - x.createdTs);
 
-/** Which escalation clock an open item is on: 'accept' (waiting for someone), 'deliver' (accepted, not yet delivered) or none. */
+/** Which escalation clock an open item is on: 'accept' (waiting for someone), 'deliver' (accepted, not yet handed to the customer) or none. */
 export function stageOf(x) {
   if (!isOpen(x)) return null;
   if (x.status === 'requested') return 'accept';
   if (x.status === 'accepted') return 'deliver';
-  return null; // on the way: handed over
+  if (x.status === 'on_the_way' && x.deliveredTs == null) return 'deliver'; // on the way, not yet handed to the customer
+  return null;
 }
 
 export const STAGE_LABEL = { accept: 'Not accepted in time', deliver: 'Not delivered in time' };
@@ -218,7 +229,7 @@ export const ownerRole = (x) => (x.status === 'requested' ? x.route?.role : x.ac
 export function timerFor(x, now, config) {
   const stage = stageOf(x);
   if (stage) return { stage, startTs: stageStart(x, stage), endTs: null, ...stageLimits(config, stage) };
-  if (x.status === 'on_the_way') return { stage: null, startTs: x.acceptedTs ?? x.createdTs, endTs: x.onTheWayTs ?? now, ...stageLimits(config, 'deliver') };
+  if (x.status === 'on_the_way') return { stage: null, startTs: x.acceptedTs ?? x.createdTs, endTs: x.deliveredTs ?? now, ...stageLimits(config, 'deliver') };
   return { stage: null, startTs: x.createdTs, endTs: endTs(x) ?? now, ...stageLimits(config, 'accept') };
 }
 
@@ -252,7 +263,7 @@ export function customerSteps(req) {
     {
       key: 'on_the_way',
       label: reachedWay
-        ? `On the way to Room ${req.onTheWay.room} (bringing ${req.onTheWay.itemLabel})`
+        ? (req.deliveredTs != null ? `Delivered to Room ${req.onTheWay.room} (${req.onTheWay.itemLabel})` : `On the way to Room ${req.onTheWay.room} (bringing ${req.onTheWay.itemLabel})`)
         : 'On the way',
       reached: reachedWay,
     },

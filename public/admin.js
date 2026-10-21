@@ -88,6 +88,11 @@ export function render() {
       <div class="row"><span>Items declined at the door</span><strong>${m.itemsDeclined}</strong></div>
       <div class="row"><span>Escalations / assisted / median time to assist</span><strong>${m.escalations + m.floorTaskEscalations} / ${m.assists} / ${fmtDur(m.medianAssistMs)}</strong></div>
       <div class="row"><span>Cancelled (before accept / after accept / on the way)</span><strong>${m.cancelled} (${m.cancelledByStage.requested} / ${m.cancelledByStage.accepted} / ${m.cancelledByStage.on_the_way})</strong></div>
+      <div class="row"><span>Median to hand over (accept → handed to customer)</span><strong>${fmtDur(m.medianDeliverMs)}</strong></div>
+      <div class="row"><span>Median to set off (accept → on the way)</span><strong>${fmtDur(m.medianDispatchMs)}</strong></div>
+      <div class="row"><span>Median try-on (handed over → closed)</span><strong>${fmtDur(m.medianTryOnMs)}</strong></div>
+      <div class="row"><span>Try-on: customer said fits / still not right</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight}</strong></div>
+      <div class="row"><span>Follow-up requests (continued from an earlier one)</span><strong>${m.followUps}</strong></div>
       <div class="row"><span>Floor pulls done / requested</span><strong>${m.floorPullsDone} / ${m.floorPullsRequested}</strong></div>
       <div class="row"><span>Deferred (saved for later)</span><strong>${pct(m.deferredRate)} (${m.deferred} of ${m.closed} closed)</strong></div>
       <div class="row"><span>Parsing so far</span><strong>${m.parseMethods.ai} AI · ${m.parseMethods.fallback} rule-based · ${m.parseMethods.none} no free text</strong></div>
