@@ -8,7 +8,9 @@ export function deriveAll(events, catalogue = CATALOGUE) {
   const requests = [];
   const tasks = [];
   const byId = {};
-  const discrepancies = {}; // skuId -> number of "not on rack" reports (all requests)
+  const discrepancies = {}; // skuId -> number of "not on rack" reports (all requests) since the last recount
+  const recounts = {}; // skuId -> when a recount task was last finished
+  const replenished = {}; // skuId -> when a restock task was last finished
 
   const get = (id) => byId[id];
   const clearEscalation = (x) => { x.escalated = false; x.escalatedTs = null; x.escalatedStage = null; x.assistedNow = false; };
@@ -112,6 +114,28 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         parent?.floorTaskIds.push(t.id);
         break;
       }
+      case 'restock_task_created': {
+        const sku = getSku(p.skuId, catalogue);
+        const t = {
+          kind: 'task', taskType: 'restock', restockKind: p.kind, id: p.taskId || e.requestId, parentId: null, skuId: p.skuId, itemId: p.skuId,
+          rack: p.rack, items: [{ itemId: p.skuId, rack: p.rack }], room: null, createdTs: e.ts,
+          route: { role: 'floor', rule: 'restock task -> floor associate' },
+          status: 'requested', acceptedTs: null, acceptedBy: null, doneTs: null, cancelledTs: null,
+          escalated: false, escalatedTs: null, escalatedStage: null, escalations: [], assistLog: [], assistedNow: false,
+          assistedBy: null, assistedTs: null, skill: sku ? skillOf(sku) : null, assignments: [], openToAll: false, acceptedStaffId: null, acceptedTier: null,
+        };
+        byId[t.id] = t;
+        tasks.push(t);
+        break;
+      }
+      case 'restock_task_done': {
+        const t = get(e.requestId);
+        if (!t || t.taskType !== 'restock' || t.status === 'done' || t.status === 'cancelled') break;
+        t.status = 'done'; t.doneTs = e.ts;
+        if (t.restockKind === 'recount') { recounts[t.skuId] = e.ts; discrepancies[t.skuId] = 0; } // the rack was recounted
+        else replenished[t.skuId] = e.ts;
+        break;
+      }
       case 'floor_pull_done': {
         const t = get(e.requestId);
         if (t && t.status !== 'cancelled') { t.status = 'done'; t.doneTs = e.ts; clearEscalation(t); }
@@ -191,7 +215,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
     const parent = byId[t.parentId];
     if (parent?.status === 'cancelled' && t.status !== 'done') { t.status = 'cancelled'; t.cancelledTs = parent.cancelledTs; }
   }
-  return { requests, tasks, byId, discrepancies };
+  return { requests, tasks, byId, discrepancies, recounts, replenished };
 }
 
 export const isOpen = (x) => !['done', 'closed', 'cancelled'].includes(x.status);
@@ -201,7 +225,7 @@ export const elapsedMs = (x, now) => Math.max(0, (endTs(x) ?? now) - x.createdTs
 
 /** Which escalation clock an open item is on: 'accept' (waiting for someone), 'deliver' (accepted, not yet handed to the customer) or none. */
 export function stageOf(x) {
-  if (!isOpen(x)) return null;
+  if (!isOpen(x) || x.taskType === 'restock') return null; // a restock task is housekeeping: no escalation clock
   if (x.status === 'requested') return 'accept';
   if (x.status === 'accepted') return 'deliver';
   if (x.status === 'on_the_way' && x.deliveredTs == null) return 'deliver'; // on the way, not yet handed to the customer
@@ -227,6 +251,7 @@ export const ownerRole = (x) => (x.status === 'requested' ? x.route?.role : x.ac
  * timer freezes at the delivery time; closed items show the total.
  */
 export function timerFor(x, now, config) {
+  if (x.taskType === 'restock') return { stage: null, startTs: x.createdTs, endTs: x.doneTs ?? null, warnSeconds: 1e9, escalateSeconds: 1e9 }; // never amber or red
   const stage = stageOf(x);
   if (stage) return { stage, startTs: stageStart(x, stage), endTs: null, ...stageLimits(config, stage) };
   if (x.status === 'on_the_way') return { stage: null, startTs: x.acceptedTs ?? x.createdTs, endTs: x.deliveredTs ?? now, ...stageLimits(config, 'deliver') };

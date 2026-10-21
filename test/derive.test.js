@@ -539,3 +539,42 @@ test('the customer steps say Delivered once the item has been handed over', () =
   add(30_000, 'r1', 'delivered', {}, 'runner');
   assert.match(customerSteps(deriveAll(events).byId.r1)[2].label, /^Delivered to Room 1/);
 });
+
+// ---------- restock tasks (dispatched from the Manager) ----------
+const restock = (add, ts, taskId, skuId, kind, rack) => add(ts, taskId, 'restock_task_created', { taskId, skuId, kind, rack, signalKind: kind === 'recount' ? 'inventory' : 'high_demand' }, 'manager');
+
+test('a restock task is a floor task with no request behind it, ranked below customer work, and never escalated', () => {
+  const { events, add } = makeLog();
+  mkReq(add, 'r1', 0);
+  add(1, 'r1', 'accepted', { role: 'runner' });
+  add(2, 'r1', 'floor_pull_requested', { taskId: 'pull', itemId: 'OX-M-REG', rack: 'A4' });
+  restock(add, 3, 'rs1', 'OX-M-REG', 'recount', 'A4');
+  const d = deriveAll(events);
+  const t = d.byId.rs1;
+  assert.deepEqual([t.kind, t.taskType, t.restockKind, t.skuId, t.parentId, t.room, t.status], ['task', 'restock', 'recount', 'OX-M-REG', null, null, 'requested']);
+  assert.deepEqual(t.route, { role: 'floor', rule: 'restock task -> floor associate' });
+  assert.equal(t.skill, 'Men|shirt');
+  assert.deepEqual(buildQueue('floor', d, 10).map((x) => x.id), ['pull', 'rs1']); // the customer's pull first
+  assert.equal(stageOf(t), null);                                                 // no escalation clock
+  assert.equal(cardState(t, 9_999_999, config), 'normal');
+});
+
+test('finishing a recount clears the earlier "not on rack" reports for that item; a replenish clears earlier demand', () => {
+  const { events, add } = makeLog();
+  mkReq(add, 'r1', 0);
+  add(1, 'r1', 'accepted', { role: 'runner' });
+  add(2, 'r1', 'suggestion_shown', { kind: 'alternative', itemId: 'OX-M-REG' });
+  add(3, 'r1', 'inventory_discrepancy', { skuId: 'OX-M-REG', rack: 'A4' });
+  assert.equal(deriveAll(events).discrepancies['OX-M-REG'], 1);
+  restock(add, 4, 'rs1', 'OX-M-REG', 'recount', 'A4');
+  add(5, 'rs1', 'accepted', { role: 'floor' }, 'floor');
+  assert.equal(deriveAll(events).discrepancies['OX-M-REG'], 1);   // not cleared until the recount is done
+  add(6, 'rs1', 'restock_task_done', {}, 'floor');
+  const d = deriveAll(events);
+  assert.equal(d.byId.rs1.status, 'done');
+  assert.equal(d.discrepancies['OX-M-REG'], 0);
+  assert.equal(d.recounts['OX-M-REG'], 6);
+  restock(add, 7, 'rs2', 'OX-L-REG', 'replenish', 'A5');
+  add(8, 'rs2', 'accepted', { role: 'floor' }, 'floor'); add(9, 'rs2', 'restock_task_done', {}, 'floor');
+  assert.equal(deriveAll(events).replenished['OX-L-REG'], 9);
+});

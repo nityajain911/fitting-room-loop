@@ -22,7 +22,8 @@ export function routeFor(issue) {
 
 export const TASK_ROUTE = { role: 'floor', rank: 1, rule: 'floor pull -> floor associate' };
 
-const rankOf = (x) => (x.kind === 'task' ? TASK_ROUTE.rank : RULES[x.issue]?.rank ?? 9);
+// Customer work first; a restock task the manager dispatched waits behind it.
+const rankOf = (x) => (x.taskType === 'restock' ? 4 : x.kind === 'task' ? TASK_ROUTE.rank : RULES[x.issue]?.rank ?? 9);
 
 /** Open requests/tasks for a role, ordered by type rank, then longest waiting first. */
 export function buildQueue(role, derived, now) {

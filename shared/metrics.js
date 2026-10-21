@@ -15,7 +15,9 @@ export function median(nums) {
 const ratio = (n, d) => (d > 0 ? n / d : null);
 
 export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
-  const { requests, tasks, discrepancies } = deriveAll(events);
+  const { requests, tasks: allTasks, discrepancies, recounts, replenished } = deriveAll(events);
+  const tasks = allTasks.filter((t) => t.taskType !== 'restock'); // customer floor pulls
+  const restockTasks = allTasks.filter((t) => t.taskType === 'restock'); // dispatched from the Manager
 
   const continuedReqs = requests.filter((r) => r.status === 'closed' && r.outcome === CONTINUED);
   const closedReqs = requests.filter((r) => r.status === 'closed' && r.outcome !== CONTINUED);
@@ -60,6 +62,7 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
   const missing = new Map();
   for (const r of requests) {
     for (const d of r.discrepancies) {
+      if (d.ts <= (recounts[d.skuId] ?? -1)) continue; // the rack was recounted since
       const m = missing.get(d.skuId) || { skuId: d.skuId, count: 0, racks: new Set() };
       m.count += 1;
       m.racks.add(d.rack);
@@ -80,7 +83,11 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
   // (not on rack, declined) and cancelled requests do not count.
   const deliveries = {};
   for (const r of requests) {
-    if (r.onTheWay && r.status !== 'cancelled') for (const i of r.onTheWay.items) deliveries[i.itemId] = (deliveries[i.itemId] || 0) + 1;
+    if (r.onTheWay && r.status !== 'cancelled') {
+      for (const i of r.onTheWay.items) {
+        if ((r.onTheWayTs ?? 0) > (replenished[i.itemId] ?? -1)) deliveries[i.itemId] = (deliveries[i.itemId] || 0) + 1; // since the last restock
+      }
+    }
   }
 
   return {
@@ -121,7 +128,8 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     itemsDeclined: requests.reduce((n, r) => n + r.declinedIds.length, 0),
     assists: assistLog.length,
     medianAssistMs: median(assistLog.map((a) => a.ts - a.escalatedTs)),
-    signals: buildSignals(sku, inventoryDiscrepancies, cfg, catalogue, deliveries),
+    signals: withDispatch(buildSignals(sku, inventoryDiscrepancies, cfg, catalogue, deliveries), restockTasks),
+    restock: { requested: restockTasks.filter((t) => t.status !== 'cancelled').length, done: restockTasks.filter((t) => t.status === 'done').length, open: restockTasks.filter((t) => ['requested', 'accepted'].includes(t.status)).length },
     heatmap: buildHeatmap(requests, catalogue),
     routing: buildRouting(requests),
   };
@@ -174,12 +182,20 @@ const label = (id, catalogue) => { const s = getSku(id, catalogue); return s ? s
  * the log, the thresholds are prototype settings, and shares are "share of requests" (only customers who asked
  * for help are counted, so this is not a defect rate).
  */
+/** Mark a signal that has a live restock task (waiting or accepted), so the Manager screen shows it as dispatched. */
+function withDispatch(signals, restockTasks) {
+  return signals.map((s) => {
+    const live = s.dispatch && restockTasks.find((t) => t.skuId === s.dispatch.skuId && t.restockKind === s.dispatch.kind && ['requested', 'accepted'].includes(t.status));
+    return s.dispatch ? { ...s, dispatched: live ? { taskId: live.id, status: live.status } : null } : s;
+  });
+}
+
 function buildSignals(groups, inventory, cfg, catalogue, deliveries = {}) {
   const out = [];
   for (const m of inventory.bySku) {
     if (m.count >= cfg.signalMinMisses) {
       out.push({
-        kind: 'inventory', skuId: m.skuId, count: m.count, of: null,
+        kind: 'inventory', skuId: m.skuId, count: m.count, of: null, dispatch: { kind: 'recount', skuId: m.skuId, rack: m.racks[0] },
         action: { label: `Audit rack ${m.racks.join(', ')}: stock record reported wrong`, severity: 'high' },
         text: `${label(m.skuId, catalogue)}: reported missing on the rack ${m.count} ${m.count === 1 ? 'time' : 'times'} (rack ${m.racks.join(', ')}) — recount the rack; the stock record may be overstated`,
       });
@@ -208,7 +224,7 @@ function buildSignals(groups, inventory, cfg, catalogue, deliveries = {}) {
   for (const [skuId, count] of Object.entries(deliveries).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))) {
     if (count >= cfg.signalMinPulls) {
       out.push({
-        kind: 'high_demand', skuId, count, of: null,
+        kind: 'high_demand', skuId, count, of: null, dispatch: { kind: 'replenish', skuId, rack: getSku(skuId, catalogue)?.rack ?? null },
         action: { label: 'Keep a buffer near the fitting rooms', severity: 'low' },
         text: `${label(skuId, catalogue)}: brought to the fitting room ${count} times as a replacement`,
       });

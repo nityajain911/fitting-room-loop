@@ -3,6 +3,7 @@ export const EVENT_TYPES = [
   'created', 'routed', 'accepted', 'suggestion_shown', 'suggestion_confirmed',
   'suggestion_rejected', 'on_the_way', 'floor_pull_requested', 'floor_pull_done',
   'escalated', 'closed', 'cancelled', 'reason_added', 'inventory_discrepancy', 'item_declined', 'assisted', 'assigned', 'floor_pull_cancelled', 'delivered', 'tryon_feedback',
+  'restock_task_created', 'restock_task_done',
 ];
 
 export const UNKNOWN = 'other/unknown';
@@ -54,6 +55,10 @@ export const OUTCOMES = {
 // A request that was carried on in a follow-up ("still not right, try another") is closed with this; it is neither a
 // sale nor a loss, so it is left out of the closed counts and the follow-up carries the result.
 export const CONTINUED = 'continued';
+// A task the manager dispatches from a Manager signal. "recount": check the rack and correct the stock record.
+// "replenish": top up the rack near the fitting rooms. Never carries a quantity (we do not know the backroom stock).
+export const RESTOCK_KINDS = { recount: 'Recount the rack', replenish: 'Restock near the fitting rooms' };
+export const RESTOCK_SIGNAL = { recount: 'inventory', replenish: 'high_demand' };
 export const OUTCOME_LABELS = { ...OUTCOMES, [CONTINUED]: 'Continued in a follow-up request' };
 export const TRYON_RESULTS = ['fits', 'not_right'];
 export const SAVE_OUTCOMES = ['bought_original', 'bought_alternative', 'cross_store_order'];

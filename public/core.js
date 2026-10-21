@@ -204,6 +204,8 @@ export function describeEvent(e) {
     case 'tryon_feedback': return p.result === 'fits' ? 'Customer says it fits' : 'Customer says it is still not right';
     case 'floor_pull_requested': return `Floor pull: ${itemName(p.itemId)} (rack ${p.rack})`;
     case 'floor_pull_done': return 'Floor pull done';
+    case 'restock_task_created': return `Restock task sent to the floor: ${p.kind === 'recount' ? 'recount' : 'restock near the fitting rooms'} ${itemName(p.skuId)}${p.rack ? ` (rack ${p.rack})` : ''}`;
+    case 'restock_task_done': return 'Restock task done';
     case 'floor_pull_cancelled': return p.reason === 'customer_declined' ? 'Floor pull cancelled: the customer declined the items' : `Floor pull cancelled by ${roleLabel(p.byRole)}`;
     case 'escalated': return `Escalated: ${p.stage === 'deliver' ? 'not delivered' : 'not accepted'} within ${p.thresholdSec}s`;
     case 'closed': return `Closed: ${outcomeLabel(p.outcome)}`;

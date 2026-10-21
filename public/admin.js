@@ -93,6 +93,7 @@ export function render() {
       <div class="row"><span>Median try-on (handed over → closed)</span><strong>${fmtDur(m.medianTryOnMs)}</strong></div>
       <div class="row"><span>Try-on: customer said fits / still not right</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight}</strong></div>
       <div class="row"><span>Follow-up requests (continued from an earlier one)</span><strong>${m.followUps}</strong></div>
+      <div class="row"><span>Restock tasks from the Manager: done / sent</span><strong>${m.restock.done} / ${m.restock.requested}</strong></div>
       <div class="row"><span>Floor pulls done / requested</span><strong>${m.floorPullsDone} / ${m.floorPullsRequested}</strong></div>
       <div class="row"><span>Deferred (saved for later)</span><strong>${pct(m.deferredRate)} (${m.deferred} of ${m.closed} closed)</strong></div>
       <div class="row"><span>Parsing so far</span><strong>${m.parseMethods.ai} AI · ${m.parseMethods.fallback} rule-based · ${m.parseMethods.none} no free text</strong></div>

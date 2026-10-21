@@ -13,7 +13,7 @@ import { isOpen, ownerRole, STAGE_LABEL } from '/shared/derive.js';
 import { mergeIssue } from '/shared/fitMatch.js';
 import { getSku, skuLabel, MEASURE_LABELS } from '/shared/catalogue.js';
 import { STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
-import { SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
+import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
 
 const drafts = {}; // requestId -> { fields, method, original } (AI-structured reason being edited)
 const picks = {};  // requestId -> { sig, ids: Set } the items ticked for the trip (default: all suggested items)
@@ -232,9 +232,9 @@ function queueCard(x) {
   const cls = x.escalated ? 'esc' : '';
   if (x.kind === 'task') {
     return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
-      <div class="row"><strong>Floor stock pull</strong>${timerHtml(x, 'plain')}</div>
+      <div class="row"><strong>${esc(taskTitle(x))}</strong>${timerHtml(x, 'plain')}</div>
       <div class="small muted">${(x.items || []).length > 1 ? `${x.items.length} items` : esc(itemName(x.itemId))}</div>
-      <div class="pills">${(x.items || []).map((i) => rackPill(i.rack)).join('')}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
+      <div class="pills">${x.taskType === 'restock' ? '<span class="pill accent">From the manager</span>' : ''}${(x.items || []).map((i) => rackPill(i.rack)).join('')}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
   }
   const target = x.suggestion?.itemId ? getSku(x.suggestion.itemId) : null;
   return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
@@ -244,7 +244,28 @@ function queueCard(x) {
 }
 
 // ---------- floor task ----------
+const taskTitle = (x) => (x.taskType === 'restock' ? RESTOCK_KINDS[x.restockKind] || 'Restock' : 'Floor stock pull');
+const RESTOCK_HELP = {
+  recount: 'Count what is on the rack. If the stock record is wrong, correct it. The manager flagged it because customers found it missing.',
+  replenish: 'Top up the rack closest to the fitting rooms with this item from stock. It has been brought to the fitting rooms several times.',
+};
+const RESTOCK_DONE = { recount: 'Recounted — record corrected', replenish: 'Restocked' };
+
+function restockDetail(t) {
+  return `
+    <div class="head">${ringHtml(t, 56)}<div><h1>${esc(taskTitle(t))}</h1>${timerHtml(t, 'plain')}</div></div>
+    <div class="card stack">
+      <div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(t.skuId))}</strong>${rackPill(t.rack)}</div></div></div>
+      <div>${esc(RESTOCK_HELP[t.restockKind] || '')}</div>
+      <div class="small muted">Sent from the Manager dashboard. No quantity is given: use your judgement on the floor.</div>
+      ${statusPill(t)}
+      ${t.status === 'requested' ? `<button class="btn primary block" data-action="a-task-accept" data-v="${esc(t.id)}">Accept</button>` : ''}
+      ${t.status === 'accepted' ? `<button class="btn primary block" data-action="a-task-done" data-v="${esc(t.id)}">${esc(RESTOCK_DONE[t.restockKind] || 'Done')}</button>` : ''}
+    </div>`;
+}
+
 function taskDetail(t) {
+  if (t.taskType === 'restock') return restockDetail(t);
   return `
     <div class="head">${ringHtml(t, 56)}<div><h1>Floor stock pull</h1>${timerHtml(t, 'plain')}</div></div>
     <div class="card stack">

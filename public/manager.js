@@ -1,7 +1,7 @@
 // Screen 3 — manager dashboard ("store command center"). Only what a store manager acts on, drawn rather than listed.
 // Every number comes from computeMetrics(events). Definitions sit behind a small (i) toggle instead of captions.
 // Settings, demo controls, parser stats, per-SKU detail, the raw event log and "clear data" live on the Admin page.
-import { S, hooks, handlers, esc, fmtDur, fmtClock, pct, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel } from './core.js';
+import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel } from './core.js';
 import { computeMetrics } from '/shared/metrics.js';
 import { EVIDENCE_TYPES } from '/shared/events.js';
 import { bulletScale, outcomeFunnel } from '/shared/visuals.js';
@@ -128,10 +128,23 @@ function heatmap(m, cfg) {
 
 const KIND = { inventory: 'Stock record', fit: 'Fit / sizing', stock_gap: 'Stock depth', high_demand: 'High demand' };
 const SEVERITY = { high: 'danger', medium: 'warn', low: 'accent' };
+handlers['m-dispatch'] = async (el) => {
+  const out = await act(() => api('POST', '/api/restock', { skuId: el.dataset.sku, kind: el.dataset.kind }));
+  if (out) toast('Sent to the floor team');
+};
+
+/** The one-tap "do something about it": only signals the floor can act on (a recount, or restocking near the rooms). */
+function dispatchControl(s) {
+  if (!s.dispatch) return '';
+  if (s.dispatched) return `<span class="pill ok">Sent to the floor · ${s.dispatched.status === 'accepted' ? 'in progress' : 'waiting'}</span>`;
+  const label = s.dispatch.kind === 'recount' ? 'Send recount to the floor' : 'Send restock to the floor';
+  return `<button class="btn small-btn" data-action="m-dispatch" data-sku="${esc(s.dispatch.skuId)}" data-kind="${esc(s.dispatch.kind)}">${label}</button>`;
+}
+
 function signals(m) {
   return m.signals.map((s) => `<div class="card signal ${esc(s.kind)}">
       <div class="small muted">${esc(KIND[s.kind])}</div><div>${esc(s.text)}</div>
-      ${s.action ? `<div style="margin-top:6px"><span class="pill ${SEVERITY[s.action.severity] || ''}">Action: ${esc(s.action.label)}</span></div>` : ''}</div>`).join('')
+      ${s.action ? `<div style="margin-top:6px"><span class="pill ${SEVERITY[s.action.severity] || ''}">Action: ${esc(s.action.label)}</span> ${dispatchControl(s)}</div>` : ''}</div>`).join('')
     + '<p class="label-note">Suggested actions come from simple rules on the counts above. Shares are of requests, not defect rates: only customers who asked for help are counted.</p>';
 }
 

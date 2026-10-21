@@ -411,3 +411,58 @@ test('a request continued in a follow-up is not a lost sale and not a sale: it l
   assert.equal(m.continued, 1);
   assert.equal(m.followUps, 1);
 });
+
+// ---------- restock tasks and signals ----------
+const missingOnRack = (add, id, ts, skuId = 'OX-M-REG', rack = 'A4') => {
+  mk(add, id, ts); add(ts + 1, id, 'accepted', { role: 'runner' });
+  add(ts + 2, id, 'suggestion_shown', { kind: 'alternative', itemId: skuId });
+  add(ts + 3, id, 'inventory_discrepancy', { skuId, rack });
+};
+
+test('an inventory signal can be dispatched as a recount; the signal shows it is dispatched, and finishing it clears the signal', () => {
+  const { events, add } = makeLog();
+  missingOnRack(add, 'a', 0);
+  let m = computeMetrics(events, undefined, cfg);
+  const sig = m.signals.find((x) => x.kind === 'inventory');
+  assert.deepEqual(sig.dispatch, { kind: 'recount', skuId: 'OX-M-REG', rack: 'A4' });
+  assert.equal(sig.dispatched, null);
+  add(10, 'rs1', 'restock_task_created', { taskId: 'rs1', skuId: 'OX-M-REG', kind: 'recount', rack: 'A4', signalKind: 'inventory' }, 'manager');
+  m = computeMetrics(events, undefined, cfg);
+  assert.deepEqual(m.signals.find((x) => x.kind === 'inventory').dispatched, { taskId: 'rs1', status: 'requested' });
+  add(11, 'rs1', 'accepted', { role: 'floor' }, 'floor');
+  assert.equal(computeMetrics(events, undefined, cfg).signals.find((x) => x.kind === 'inventory').dispatched.status, 'accepted');
+  add(12, 'rs1', 'restock_task_done', {}, 'floor');
+  m = computeMetrics(events, undefined, cfg);
+  assert.equal(m.signals.some((x) => x.kind === 'inventory'), false);   // the recount closed it
+  assert.equal(m.inventoryDiscrepancies.total, 0);
+  missingOnRack(add, 'b', 20);                                           // missing again after the recount: a new signal
+  assert.equal(computeMetrics(events, undefined, cfg).signals.some((x) => x.kind === 'inventory'), true);
+});
+
+test('high demand is dispatched as a replenish; finishing it resets the count from then on', () => {
+  const { events, add } = makeLog();
+  for (const [id, t] of [['a', 0], ['b', 10]]) {
+    mk(add, id, t); add(t + 1, id, 'accepted', { role: 'runner' });
+    add(t + 2, id, 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' });
+  }
+  let m = computeMetrics(events, undefined, cfg);
+  assert.deepEqual(m.signals.find((x) => x.kind === 'high_demand').dispatch, { kind: 'replenish', skuId: 'OX-M-REG', rack: getSkuRack('OX-M-REG') });
+  add(30, 'rs1', 'restock_task_created', { taskId: 'rs1', skuId: 'OX-M-REG', kind: 'replenish', rack: getSkuRack('OX-M-REG'), signalKind: 'high_demand' }, 'manager');
+  add(31, 'rs1', 'accepted', { role: 'floor' }, 'floor'); add(32, 'rs1', 'restock_task_done', {}, 'floor');
+  assert.equal(computeMetrics(events, undefined, cfg).signals.some((x) => x.kind === 'high_demand'), false);
+});
+
+test('restock tasks are counted apart from customer floor pulls', () => {
+  const { events, add } = makeLog();
+  mk(add, 'a', 0); add(1, 'a', 'accepted', { role: 'runner' });
+  add(2, 'a', 'floor_pull_requested', { taskId: 'p1', itemId: 'OX-M-REG', rack: 'A4' });
+  add(3, 'rs1', 'restock_task_created', { taskId: 'rs1', skuId: 'OX-M-REG', kind: 'recount', rack: 'A4', signalKind: 'inventory' }, 'manager');
+  add(4, 'rs1', 'accepted', { role: 'floor' }, 'floor'); add(5, 'rs1', 'restock_task_done', {}, 'floor');
+  add(6, 'rs2', 'restock_task_created', { taskId: 'rs2', skuId: 'OX-L-REG', kind: 'replenish', rack: 'A5', signalKind: 'high_demand' }, 'manager');
+  const m = computeMetrics(events, undefined, cfg);
+  assert.deepEqual([m.floorPullsRequested, m.floorPullsDone], [1, 0]);
+  assert.deepEqual(m.restock, { requested: 2, done: 1, open: 1 });
+});
+
+import { getSku as getCatalogueSku } from '../shared/catalogue.js';
+const getSkuRack = (id) => getCatalogueSku(id).rack;

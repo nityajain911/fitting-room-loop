@@ -8,7 +8,8 @@ import { createStore } from './store.js';
 import { makeLlm } from './llm.js';
 import { makeConfig } from '../shared/config.js';
 import { CATALOGUE, CATALOGUE_LABEL, getSku, skuLabel } from '../shared/catalogue.js';
-import { ISSUES, CHIPS, OUTCOMES, CONTINUED, TRYON_RESULTS, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
+import { computeMetrics } from '../shared/metrics.js';
+import { ISSUES, CHIPS, OUTCOMES, CONTINUED, TRYON_RESULTS, RESTOCK_KINDS, RESTOCK_SIGNAL, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
 import { routeFor } from '../shared/routing.js';
 import { deriveAll, isOpen, effectiveCatalogue, excludedIds, stageOf, stageStart, stageLimits, ownerRole } from '../shared/derive.js';
 import { normaliseStaff, MAX_STAFF, nextAssignment, accessFor } from '../shared/staffing.js';
@@ -429,11 +430,26 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     res.json({ ok: true });
   });
 
+  // The manager turns a signal on the dashboard into a task for the floor team. Only for a signal that exists right now
+  // (so the rule, not the caller, decides what is worth doing), once at a time, and never with a quantity.
+  app.post('/api/restock', (req, res) => {
+    const { skuId, kind } = req.body || {};
+    if (!(kind in RESTOCK_KINDS)) throw bad('kind must be recount or replenish');
+    if (!getSku(skuId, catalogue)) throw bad('Unknown item');
+    const signal = computeMetrics(store.all(), catalogue, cfg()).signals.find((x) => x.kind === RESTOCK_SIGNAL[kind] && x.skuId === skuId);
+    if (!signal) throw conflict('There is no open signal for that item');
+    if (signal.dispatched) throw conflict('Already sent to the floor team');
+    const taskId = rid('t');
+    append(taskId, 'restock_task_created', 'manager', { taskId, skuId, kind, rack: signal.dispatch.rack, signalKind: signal.kind });
+    assignPending();
+    res.json({ taskId });
+  });
+
   app.post('/api/tasks/:id/done', (req, res) => {
     const t = getTask(req.params.id);
     const role = taskRole(req, t);
     if (t.status !== 'accepted') throw conflict('Task must be accepted first');
-    append(t.id, 'floor_pull_done', role, {});
+    append(t.id, t.taskType === 'restock' ? 'restock_task_done' : 'floor_pull_done', role, {});
     res.json({ ok: true });
   });
 

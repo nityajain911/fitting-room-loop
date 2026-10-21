@@ -981,3 +981,58 @@ test('"try another": a follow-up request in the same room continues the first, w
   assert.deepEqual([m.closed, m.continued, m.followUps], [0, 1, 1]);
   assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3 })).status, 400); // already continued
 });
+
+// ---------- restock tasks from the Manager ----------
+const missingOnRackApi = async (s, room = 2, runner = null) => {
+  const r = await oxReq(s, { room });
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner', staffId: runner?.id });
+  const sku = (await s.events()).filter((e) => e.type === 'suggestion_shown').pop().payload.itemId;
+  await s.call('POST', `/api/requests/${r}/next-best`, { cause: 'not_on_rack', role: 'runner', itemId: sku });
+  return sku;
+};
+
+test('dispatching a restock task: only for a live signal, once, and it reaches the floor queue', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  assert.equal((await s.call('POST', '/api/restock', { skuId: 'OX-M-REG', kind: 'recount' })).status, 409);       // nothing flagged yet
+  const sku = await missingOnRackApi(s);
+  assert.equal((await s.call('POST', '/api/restock', { skuId: 'nope', kind: 'recount' })).status, 400);
+  assert.equal((await s.call('POST', '/api/restock', { skuId: sku, kind: 'burn' })).status, 400);
+  assert.equal((await s.call('POST', '/api/restock', { skuId: sku, kind: 'replenish' })).status, 409);            // wrong kind of signal for it
+  const out = await s.call('POST', '/api/restock', { skuId: sku, kind: 'recount' });
+  assert.equal(out.status, 200);
+  assert.equal((await s.call('POST', '/api/restock', { skuId: sku, kind: 'recount' })).status, 409);              // already dispatched
+  const d = deriveAll(await s.events());
+  assert.deepEqual(buildQueue('floor', d, 0).filter((x) => x.taskType === 'restock').map((x) => x.id), [out.body.taskId]);
+  const created = (await s.events()).find((e) => e.type === 'restock_task_created');
+  assert.deepEqual([created.actor, created.payload.skuId, created.payload.kind], ['manager', sku, 'recount']);
+  assert.ok(!('quantity' in created.payload) && !('qty' in created.payload), 'no invented quantities');
+});
+
+test('the floor accepts and finishes a recount; the signal clears and stock is no longer reduced for it', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const sku = await missingOnRackApi(s);
+  const { body: { taskId } } = await s.call('POST', '/api/restock', { skuId: sku, kind: 'recount' });
+  assert.equal((await s.call('POST', `/api/tasks/${taskId}/done`, { role: 'floor' })).status, 409);              // accept it first
+  assert.equal((await s.call('POST', `/api/tasks/${taskId}/accept`, { role: 'floor' })).status, 200);
+  assert.equal((await s.call('POST', `/api/tasks/${taskId}/done`, { role: 'floor' })).status, 200);
+  const ev = await s.events();
+  assert.ok(ev.some((e) => e.type === 'restock_task_done' && e.requestId === taskId));
+  assert.equal(computeMetrics(ev).signals.some((x) => x.kind === 'inventory'), false);
+  assert.equal(deriveAll(ev).discrepancies[sku], 0);
+  assert.equal(computeMetrics(ev).floorPullsDone, 0);                                                            // not a customer pull
+});
+
+test('restock tasks are assigned to floor staff by the item\'s section, and never escalate', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const runner = await addStaff(s, 'Runner', 'runner', ['Men|shirt']);
+  const fa = await addStaff(s, 'Floor A', 'floor', ['Men|shirt']);
+  await addStaff(s, 'Floor B', 'floor', ['Women|polo']);
+  const sku = await missingOnRackApi(s, 2, runner);
+  const { body: { taskId } } = await s.call('POST', '/api/restock', { skuId: sku, kind: 'recount' });
+  assert.deepEqual(await assignedTo(s, taskId), [`primary:${fa.id}`]);
+  s.advance(600_000); s.sweep();
+  assert.ok(!(await s.events()).some((e) => e.type === 'escalated' && e.requestId === taskId));
+});
