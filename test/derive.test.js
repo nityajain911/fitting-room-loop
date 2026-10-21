@@ -578,3 +578,33 @@ test('finishing a recount clears the earlier "not on rack" reports for that item
   add(8, 'rs2', 'accepted', { role: 'floor' }, 'floor'); add(9, 'rs2', 'restock_task_done', {}, 'floor');
   assert.equal(deriveAll(events).replenished['OX-L-REG'], 9);
 });
+
+// ---------- room sessions and the kept item ----------
+test('a room release starts a new session for later requests, and requests remember their last activity', () => {
+  const { events, add } = makeLog();
+  mkReq(add, 'r1', 0);
+  add(5_000, 'r1', 'accepted', { role: 'runner' });
+  add(9_000, 'room:2', 'room_released', { room: 2, by: 'customer' }, 'customer');
+  mkReq(add, 'r2', 10_000);
+  const d = deriveAll(events);
+  assert.deepEqual([d.byId.r1.sessionStartTs, d.byId.r2.sessionStartTs], [0, 9_000]);
+  assert.equal(d.byId.r1.lastTs, 5_000);
+  assert.equal(d.rooms[2].releasedTs, 9_000);
+  assert.equal(d.byId.r2.lastTs, 10_000);
+});
+
+test('the kept item comes from the close, or is the only item of a single-item trip', () => {
+  const { events, add } = makeLog();
+  mkReq(add, 'r1', 0); add(1, 'r1', 'accepted', { role: 'runner' });
+  add(2, 'r1', 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'a', items: [{ itemId: 'OX-M-REG', itemLabel: 'a' }, { itemId: 'OX-XL-REG', itemLabel: 'b' }] });
+  add(3, 'r1', 'closed', { outcome: 'bought_alternative', itemId: 'OX-XL-REG' });
+  mkReq(add, 'r2', 0); add(1, 'r2', 'accepted', { role: 'runner' });
+  add(2, 'r2', 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'a', items: [{ itemId: 'OX-M-REG', itemLabel: 'a' }] });
+  add(3, 'r2', 'closed', { outcome: 'bought_alternative' });
+  mkReq(add, 'r3', 0); add(1, 'r3', 'accepted', { role: 'runner' });
+  add(2, 'r3', 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'a', items: [{ itemId: 'OX-M-REG', itemLabel: 'a' }, { itemId: 'OX-XL-REG', itemLabel: 'b' }] });
+  add(3, 'r3', 'closed', { outcome: 'bought_alternative' });
+  mkReq(add, 'r4', 0); add(1, 'r4', 'accepted', { role: 'runner' }); add(3, 'r4', 'closed', { outcome: 'left' });
+  const d = deriveAll(events);
+  assert.deepEqual([d.byId.r1.keptItemId, d.byId.r2.keptItemId, d.byId.r3.keptItemId, d.byId.r4.keptItemId], ['OX-XL-REG', 'OX-M-REG', null, null]);
+});

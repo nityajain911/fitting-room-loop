@@ -9,9 +9,10 @@ import { skillLabel } from '/shared/skills.js';
 import { accessFor } from '/shared/staffing.js';
 import { suggestionItemIds, optionFor, choiceSummary } from '/shared/fitMatch.js';
 import { buildQueue, buildAssistQueue, recentlyClosed } from '/shared/routing.js';
-import { isOpen, ownerRole, STAGE_LABEL } from '/shared/derive.js';
+import { isOpen, ownerRole, STAGE_LABEL, effectiveCatalogue } from '/shared/derive.js';
 import { mergeIssue } from '/shared/fitMatch.js';
-import { getSku, skuLabel, MEASURE_LABELS } from '/shared/catalogue.js';
+import { CATALOGUE, getSku, skuLabel, MEASURE_LABELS } from '/shared/catalogue.js';
+import { carryoverFor } from '/shared/carryover.js';
 import { STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
 import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
 
@@ -59,7 +60,7 @@ handlers['a-reject'] = (el) => post(`/api/requests/${el.dataset.v}/reject`, { ro
 handlers['a-deliver'] = (el) => post(`/api/requests/${el.dataset.v}/deliver`, { role: lastRole });
 handlers['a-pull-cancel'] = (el) => post(`/api/tasks/${el.dataset.v}/cancel`, { role: lastRole });
 handlers['a-pull'] = (el) => post(`/api/requests/${el.dataset.v}/floor-pull`, { role: lastRole });
-handlers['a-close'] = (el) => post(`/api/requests/${el.dataset.v}/close`, { outcome: el.dataset.outcome, role: lastRole });
+handlers['a-close'] = (el) => post(`/api/requests/${el.dataset.v}/close`, { outcome: el.dataset.outcome, role: lastRole, ...(el.dataset.item ? { itemId: el.dataset.item } : {}) });
 handlers['a-left-early'] = (el) => {
   if (!confirm('Close this request as "Left"?')) return null;
   return post(`/api/requests/${el.dataset.v}/close`, { outcome: 'left', role: lastRole });
@@ -240,7 +241,7 @@ function queueCard(x) {
   return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
     <div class="row"><strong>${esc(issuesText(x))}</strong>${timerHtml(x, 'plain')}</div>
     <div class="small muted">${esc(itemName(x.skuId))}</div>
-    <div class="pills">${roomBadge(x)}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
+    <div class="pills">${roomBadge(x)}${carryover(x) ? '<span class="pill accent">💡 Fit carryover</span>' : ''}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
 }
 
 // ---------- floor task ----------
@@ -334,6 +335,7 @@ function normalDetail(r, role, withHead) {
     ${withHead ? `<div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}</div></div>
     <div class="subhead"><span>${esc(itemName(r.skuId))}</span>${statusPill(r)}</div>` : ''}
     ${withHead ? escBanner(r) : ''}
+    ${(() => { const c = carryover(r); return c ? `<div class="banner info">💡 <strong>Fit carryover.</strong> ${esc(c.text)} <span class="small muted">A hint from this room visit, not a profile.</span></div>` : ''; })()}
     ${r.itemDeclined ? `<div class="banner alert"><strong>Customer says: not this one.</strong> Don't bring ${esc(itemName(r.itemDeclined.itemId))}. Show the next best below.</div>` : ''}
     ${r.status === 'cancelled' ? `<div class="banner alert"><strong>Cancelled by the customer</strong> ${esc(STAGE_TEXT[r.cancelStage] || '')}. No further action is needed.</div>` : ''}
     ${pre ? `${issueSection(r, info, true)}
@@ -493,7 +495,7 @@ function suggestionBlock(r, sku, role, compact = false) {
   const pulls = r.floorTaskIds.map((id) => S.derived.byId[id]).filter(Boolean);
   // Offered once the items are confirmed (before that, "Confirm & ask floor to pull" does both in one tap), and
   // only while no pull is live or done; cancelling a pull offers it again.
-  const showPull = role === 'runner' && isOpenReq && tripItems.length && !pulls.some((t) => ['requested', 'accepted', 'done'].includes(t.status));
+  const showPull = role === 'runner' && isOpenReq && tripItems.length && r.deliveredTs == null && !pulls.some((t) => ['requested', 'accepted', 'done'].includes(t.status));
   const pullBtn = showPull ? `<button class="btn block" style="margin-top:10px" data-action="a-pull" data-v="${esc(r.id)}">Request floor stock pull${tripItems.length > 1 ? ` for all ${tripItems.length}` : ''}</button>` : '';
   const tasks = pulls
     .map((t) => `<div class="row small" style="margin-top:8px"><span>Floor pull: ${(t.items || []).map((i) => rackPill(i.rack)).join(' ')}</span><span>${statusPill(t)}${['requested', 'accepted'].includes(t.status) && role === 'runner' ? ` <button class="link-btn" data-action="a-pull-cancel" data-v="${esc(t.id)}">Cancel pull</button>` : ''}</span></div>`).join('');
@@ -550,10 +552,19 @@ function tripEnd(r) {
 }
 
 function closeBlock(r) {
-  return `<h2>Outcome</h2><div class="btn-grid">
-    ${Object.entries(OUTCOMES).map(([k, v]) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}">${esc(v)}</button>`).join('')}
-  </div>`;
+  // When more than one item was brought, "bought alternative" names the one that was kept: one tap each. That is also what
+  // lets the next request from the same room use what this customer's fit turned out to be.
+  const orig = getSku(r.skuId);
+  const trip = (r.onTheWay?.items || []).filter((i) => getSku(i.itemId));
+  const buttons = Object.entries(OUTCOMES).flatMap(([k, v]) => (k === 'bought_alternative' && trip.length > 1
+    ? trip.map((i) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}" data-item="${esc(i.itemId)}">Bought ${esc(orig ? tripItemName(orig, getSku(i.itemId)) : itemName(i.itemId))}</button>`)
+    : [`<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}">${esc(v)}</button>`]));
+  return `<h2>Outcome</h2><div class="btn-grid">${buttons.join('')}</div>`;
 }
+
+/** What an earlier purchase in the same room visit suggests for this request (a hint, never a decision). */
+const carryover = (r) => (r.kind === 'request' && ['requested', 'accepted'].includes(r.status)
+  ? carryoverFor(r, S.derived, effectiveCatalogue(CATALOGUE, S.derived.discrepancies), S.config || {}) : null);
 
 function reasonBlock(r) {
   const d = drafts[r.id];

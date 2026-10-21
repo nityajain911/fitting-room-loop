@@ -11,6 +11,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
   const discrepancies = {}; // skuId -> number of "not on rack" reports (all requests) since the last recount
   const recounts = {}; // skuId -> when a recount task was last finished
   const replenished = {}; // skuId -> when a restock task was last finished
+  const rooms = {}; // room -> { releasedTs, by }: when the customer (or the clock) last ended that room's visit
 
   const get = (id) => byId[id];
   const clearEscalation = (x) => { x.escalated = false; x.escalatedTs = null; x.escalatedStage = null; x.assistedNow = false; };
@@ -21,7 +22,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         const r = {
           kind: 'request', id: e.requestId, room: p.room, skuId: p.skuId, issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue],
           chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none',
-          createdTs: e.ts, route: null, status: 'requested', acceptedTs: null, acceptedBy: null,
+          createdTs: e.ts, sessionStartTs: rooms[p.room]?.releasedTs ?? 0, lastTs: e.ts, keptItemId: null, route: null, status: 'requested', acceptedTs: null, acceptedBy: null,
           skill: null, assignments: [], openToAll: false, acceptedStaffId: null, acceptedTier: null,
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
           escalated: false, escalatedTs: null, escalatedStage: null, escalations: [], assistLog: [], assistedNow: false,
@@ -114,6 +115,10 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         parent?.floorTaskIds.push(t.id);
         break;
       }
+      case 'room_released': {
+        rooms[p.room] = { releasedTs: e.ts, by: p.by ?? null };
+        break;
+      }
       case 'restock_task_created': {
         const sku = getSku(p.skuId, catalogue);
         const t = {
@@ -157,7 +162,11 @@ export function deriveAll(events, catalogue = CATALOGUE) {
       }
       case 'closed': {
         const r = get(e.requestId);
-        if (r && r.status !== 'cancelled') { r.status = 'closed'; r.closedTs = e.ts; r.outcome = p.outcome; }
+        if (r && r.status !== 'cancelled') {
+          r.status = 'closed'; r.closedTs = e.ts; r.outcome = p.outcome;
+          // which of the brought items the customer kept: named at the close, or the only one that was brought
+          if (p.outcome === 'bought_alternative') r.keptItemId = p.itemId ?? (r.onTheWay?.items?.length === 1 ? r.onTheWay.items[0].itemId : null);
+        }
         break;
       }
       case 'inventory_discrepancy': {
@@ -209,13 +218,15 @@ export function deriveAll(events, catalogue = CATALOGUE) {
       default:
         break;
     }
+    const touched = byId[e.requestId]; // last activity, for the empty-room timeout (a pull's activity counts for its request)
+    if (touched) { touched.lastTs = e.ts; if (touched.parentId && byId[touched.parentId]) byId[touched.parentId].lastTs = e.ts; }
   }
   // A cancelled request takes its unfinished floor pulls with it.
   for (const t of tasks) {
     const parent = byId[t.parentId];
     if (parent?.status === 'cancelled' && t.status !== 'done') { t.status = 'cancelled'; t.cancelledTs = parent.cancelledTs; }
   }
-  return { requests, tasks, byId, discrepancies, recounts, replenished };
+  return { requests, tasks, byId, discrepancies, recounts, replenished, rooms };
 }
 
 export const isOpen = (x) => !['done', 'closed', 'cancelled'].includes(x.status);

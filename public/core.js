@@ -205,6 +205,7 @@ export function describeEvent(e) {
     case 'floor_pull_requested': return `Floor pull: ${itemName(p.itemId)} (rack ${p.rack})`;
     case 'floor_pull_done': return 'Floor pull done';
     case 'restock_task_created': return `Restock task sent to the floor: ${p.kind === 'recount' ? 'recount' : 'restock near the fitting rooms'} ${itemName(p.skuId)}${p.rack ? ` (rack ${p.rack})` : ''}`;
+    case 'room_released': return `Room ${p.room} visit ended (${p.by === 'system' ? 'the room was idle' : 'the customer left'})${p.cancelled ? `, ${p.cancelled} open request${p.cancelled === 1 ? '' : 's'} withdrawn` : ''}`;
     case 'restock_task_done': return 'Restock task done';
     case 'floor_pull_cancelled': return p.reason === 'customer_declined' ? 'Floor pull cancelled: the customer declined the items' : `Floor pull cancelled by ${roleLabel(p.byRole)}`;
     case 'escalated': return `Escalated: ${p.stage === 'deliver' ? 'not delivered' : 'not accepted'} within ${p.thresholdSec}s`;

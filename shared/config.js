@@ -15,6 +15,7 @@ export const DEFAULTS = {
   bringCount: 3, // how many best options a runner brings in one trip (1 to 5)
   primaryWaitSeconds: 20, // a request is with its primary person this long, then a secondary person is added
   secondaryWaitSeconds: 20, // ...and with the secondary this long, then it opens to everyone
+  roomSessionMinutes: 30, // a fitting room with no open request and no activity for this long counts as empty again
   staffActiveSeconds: 60, // a team member's phone counts as on for this long after it last polled
 };
 
@@ -43,5 +44,6 @@ export function makeConfig(env = {}) {
     primaryWaitSeconds: num(env.PRIMARY_WAIT_SECONDS, DEFAULTS.primaryWaitSeconds),
     secondaryWaitSeconds: num(env.SECONDARY_WAIT_SECONDS, DEFAULTS.secondaryWaitSeconds),
     staffActiveSeconds: num(env.STAFF_ACTIVE_SECONDS, DEFAULTS.staffActiveSeconds),
+    roomSessionMinutes: num(env.ROOM_SESSION_MINUTES, DEFAULTS.roomSessionMinutes),
   };
 }

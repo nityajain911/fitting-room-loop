@@ -18,7 +18,7 @@ handlers['m-save-esc'] = async () => {
   const num = (id) => Number(document.getElementById(id).value);
   const out = await act(() => api('POST', '/api/settings', {
     acceptEscalateSeconds: num('esc-accept'), deliverEscalateSeconds: num('esc-deliver'),
-    primaryWaitSeconds: num('wait-primary'), secondaryWaitSeconds: num('wait-secondary'),
+    primaryWaitSeconds: num('wait-primary'), secondaryWaitSeconds: num('wait-secondary'), roomSessionMinutes: num('room-session'),
   }));
   if (out) toast('Times saved');
 };
@@ -126,6 +126,8 @@ function escalationTimes(c) {
     ${row('wait-secondary', 'Backup has it for', 'Then it opens to everyone.', cfg.secondaryWaitSeconds)}
     ${row('esc-accept', 'Escalate if not accepted within', `Placed → accepted. Turns amber at ${stageLimits(cfg, 'accept').warnSeconds}s.`, cfg.acceptEscalateSeconds)}
     ${row('esc-deliver', 'Escalate if not on its way within', `Accepted → on its way. Turns amber at ${stageLimits(cfg, 'deliver').warnSeconds}s.`, cfg.deliverEscalateSeconds)}
+    <label class="esc-row"><span><strong>A room with nothing open is empty again after</strong><span class="small muted">The customer can end the visit sooner with "I'm done with this room". Minutes, 1 to 240.</span></span>
+      <span class="esc-input"><input type="number" id="room-session" data-keep="room-session" min="1" max="240" step="1" inputmode="numeric" value="${cfg.roomSessionMinutes ?? 30}"> min</span></label>
     <div class="small muted">Waits are 5 to 3600 s, escalation times 10 to 3600 s, whole seconds. Whoever accepts first serves the request. Once accepted, a request stops showing as escalated and only escalates again if the delivery time is passed.${S.demo.fastTimers ? ' <strong>Fast timers are on and override these for now.</strong>' : ''}</div>
     <button class="btn primary" data-action="m-save-esc">Save times</button>
   </div>`;

@@ -49,7 +49,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   // Fast timers are a short-lived presenter aid: they switch themselves off so they cannot be left on by mistake.
   // Times set on the Admin page (escalation per stage, and the primary and secondary waits), and the team roster.
   // They live beside the log (not in it) and survive a restart; "Clear demo data" leaves them alone.
-  const EDITABLE = { acceptEscalateSeconds: [10, 3600], deliverEscalateSeconds: [10, 3600], primaryWaitSeconds: [5, 3600], secondaryWaitSeconds: [5, 3600] };
+  const EDITABLE = { acceptEscalateSeconds: [10, 3600], deliverEscalateSeconds: [10, 3600], primaryWaitSeconds: [5, 3600], secondaryWaitSeconds: [5, 3600], roomSessionMinutes: [1, 240] };
   let config = { ...baseConfig };
   let staff = []; // { id, label, type, primary, secondary, onShift, code }
   if (settingsFile) {
@@ -284,6 +284,20 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     res.json({ requestId: id, method: parsed.method });
   });
 
+  // "I'm done with this room": ends the visit. Anything still open from the room is withdrawn, so nobody carries items to
+  // an empty room, and the next customer there starts a fresh session (no carryover from the one before).
+  app.post('/api/rooms/:n/release', (req, res) => {
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 1 || n > 99) throw bad('room must be a number 1-99');
+    const d = derived();
+    const current = d.requests.filter((r) => r.room === n && r.sessionStartTs === (d.rooms[n]?.releasedTs ?? 0));
+    if (!current.length) return res.json({ ok: true, noop: true });
+    const open = current.filter(isOpen);
+    for (const r of open) append(r.id, 'cancelled', 'customer', { stage: r.status });
+    append(`room:${n}`, 'room_released', 'customer', { room: n, by: 'customer', cancelled: open.length });
+    return res.json({ ok: true, cancelled: open.length });
+  });
+
   app.post('/api/requests/:id/cancel', (req, res) => {
     const r = getRequest(req.params.id);
     if (r.status === 'closed') throw conflict('Request already closed');
@@ -457,10 +471,13 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     const r = getRequest(req.params.id);
     const outcome = req.body?.outcome;
     if (!(outcome in OUTCOMES)) throw bad('Unknown outcome');
+    // Which of the brought items was kept, for a purchase of an alternative.
+    const kept = req.body?.itemId;
+    if (kept != null && (outcome !== 'bought_alternative' || !r.onTheWay?.items?.some((i) => i.itemId === kept))) throw bad('That item cannot be recorded as the one kept');
     if (r.status === 'closed') throw conflict('Request already closed');
     if (r.status === 'cancelled') throw conflict('Request was cancelled by the customer');
     if (r.status === 'requested') throw conflict('Accept the request before closing it');
-    append(r.id, 'closed', actorOf(req, r), { outcome });
+    append(r.id, 'closed', actorOf(req, r), { outcome, ...(kept != null ? { itemId: kept } : {}) });
     res.json({ ok: true });
   });
 
@@ -522,7 +539,19 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
    * Append one `escalated` event per stage when an open request/task has been in that stage longer than its own
    * limit: waiting to be accepted, or accepted but not yet delivered. Accepting clears the first escalation.
    */
+  /** A room with nothing open and no activity for the session time is empty again: the next customer starts fresh. */
+  function releaseIdleRooms() {
+    const d = derived();
+    const limit = cfg().roomSessionMinutes * 60_000;
+    for (const room of new Set(d.requests.map((r) => r.room))) {
+      const current = d.requests.filter((r) => r.room === room && r.sessionStartTs === (d.rooms[room]?.releasedTs ?? 0));
+      if (!current.length || current.some(isOpen)) continue;
+      if (now() - Math.max(...current.map((r) => r.lastTs)) >= limit) append(`room:${room}`, 'room_released', 'system', { room, by: 'system' });
+    }
+  }
+
   function sweep() {
+    releaseIdleRooms();
     assignPending();
     const t = now();
     const d = derived();

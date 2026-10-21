@@ -1036,3 +1036,67 @@ test('restock tasks are assigned to floor staff by the item\'s section, and neve
   s.advance(600_000); s.sweep();
   assert.ok(!(await s.events()).some((e) => e.type === 'escalated' && e.requestId === taskId));
 });
+
+// ---------- ending a room session, and the kept item ----------
+test('leaving a room cancels its open requests, ends the session, and does nothing when there is nothing to end', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  assert.equal((await s.call('POST', '/api/rooms/3/release', {})).body.noop, true);          // an empty room: nothing to do
+  assert.equal((await s.call('POST', '/api/rooms/0/release', {})).status, 400);
+  assert.equal((await s.call('POST', '/api/rooms/abc/release', {})).status, 400);
+  const a = await oxReq(s, { room: 3 });
+  const b = await oxReq(s, { room: 3 });
+  const other = await oxReq(s, { room: 5 });
+  await s.call('POST', `/api/requests/${a}/accept`, { role: 'runner' });
+  const out = await s.call('POST', '/api/rooms/3/release', {});
+  assert.equal(out.status, 200);
+  assert.equal(out.body.cancelled, 2);
+  const d = deriveAll(await s.events());
+  assert.deepEqual([d.byId[a].status, d.byId[b].status, d.byId[other].status], ['cancelled', 'cancelled', 'requested']);
+  assert.deepEqual([d.byId[a].cancelStage, d.byId[b].cancelStage], ['accepted', 'requested']);
+  const ev = (await s.events()).filter((e) => e.type === 'room_released');
+  assert.deepEqual(ev.map((e) => [e.payload.room, e.payload.by]), [[3, 'customer']]);
+  assert.equal((await s.call('POST', '/api/rooms/3/release', {})).body.noop, true);          // already ended
+  const later = await oxReq(s, { room: 3 });                                                 // a new customer: a new session
+  assert.ok(deriveAll(await s.events()).byId[later].sessionStartTs > 0);
+});
+
+test('a room with no open request and no activity for the session time is released on its own', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await oxReq(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  await s.call('POST', `/api/requests/${r}/close`, { outcome: 'left', role: 'runner' });
+  s.advance(29 * 60_000); s.sweep();
+  assert.equal((await s.events()).filter((e) => e.type === 'room_released').length, 0);     // still inside the window
+  s.advance(2 * 60_000); s.sweep(); s.sweep();
+  const rel = (await s.events()).filter((e) => e.type === 'room_released');
+  assert.deepEqual(rel.map((e) => [e.payload.room, e.payload.by]), [[3, 'system']]);         // once
+  const open = await oxReq(s, { room: 4 });                                                  // a room with an open request is never released
+  s.advance(120 * 60_000); s.sweep();
+  assert.equal((await s.events()).filter((e) => e.type === 'room_released' && e.payload.room === 4).length, 0);
+  assert.ok(open);
+});
+
+test('the session length is an admin setting', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const get = async () => (await s.call('GET', '/api/events?since=0')).body.settings.config.roomSessionMinutes;
+  assert.equal(await get(), 30);
+  assert.equal((await s.call('POST', '/api/settings', { roomSessionMinutes: 10 })).status, 200);
+  assert.equal(await get(), 10);
+  for (const bad of [0, 241, 'x', 5.5]) assert.equal((await s.call('POST', '/api/settings', { roomSessionMinutes: bad })).status, 400);
+});
+
+test('closing as "bought alternative" can name which of the brought items was kept', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await onTheWayReq(s);
+  const trip = deriveAll(await s.events()).byId[r].onTheWay.items.map((i) => i.itemId);
+  assert.ok(trip.length > 1);
+  assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'bought_alternative', itemId: 'OX-XXL-REG-NOPE', role: 'runner' })).status, 400); // not part of the trip
+  assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'bought_alternative', itemId: trip[1], role: 'runner' })).status, 200);
+  assert.equal(deriveAll(await s.events()).byId[r].keptItemId, trip[1]);
+  const r2 = await onTheWayReq(s, { room: 4 });
+  assert.equal((await s.call('POST', `/api/requests/${r2}/close`, { outcome: 'left', itemId: trip[0], role: 'runner' })).status, 400);                 // only a purchase has a kept item
+});

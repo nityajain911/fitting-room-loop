@@ -38,3 +38,8 @@ test('primary and secondary waits are prototype settings with env overrides', ()
   assert.equal(makeConfig({ PRIMARY_WAIT_SECONDS: 'x' }).primaryWaitSeconds, 20);
   assert.equal(makeConfig().specialistOverflowSeconds, undefined); // replaced by the two waits
 });
+
+test('the room session length is a prototype setting with an env override', () => {
+  assert.equal(makeConfig().roomSessionMinutes, 30);
+  assert.equal(makeConfig({ ROOM_SESSION_MINUTES: '45' }).roomSessionMinutes, 45);
+});

@@ -104,6 +104,22 @@ handlers['c-new'] = (el) => {
   location.hash = room ? `#customer?room=${room}` : '#customer';
   hooks.render();
 };
+// "I'm done with this room": ends the visit. Open requests are withdrawn so nobody carries items to an empty room, and
+// nothing from this visit is carried to the next customer in the room.
+handlers['c-leave'] = async (el) => {
+  const room = Number(el.dataset.room);
+  const open = roomOpen(room).length;
+  const msg = open
+    ? `You have ${open} open request${open > 1 ? 's' : ''} in Room ${room}. Leaving will cancel ${open > 1 ? 'them' : 'it'}. Leave the room?`
+    : `Done with Room ${room}?`;
+  if (!confirm(msg)) return;
+  const out = await act(() => api('POST', `/api/rooms/${room}/release`));
+  if (!out) return;
+  resetForm(); form.room = null; roomLocked = false; pickingRoom = false;
+  location.hash = '#customer';
+  toast('Thanks! See you again.');
+  hooks.render();
+};
 handlers['c-tryon'] = async (el) => {
   const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: el.dataset.result }));
   if (out && el.dataset.result === 'not_right') location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`;
@@ -157,7 +173,7 @@ const roomOpen = (room) => S.derived.requests.filter((r) => r.room === room && i
 /** The room, locked into the header once chosen. */
 function roomBar() {
   return `<div class="roombar"><span>📍 <strong>Room ${esc(form.room)}</strong></span>
-    <button class="link-btn" data-action="c-room-change">Change</button></div>`;
+    <span><button class="link-btn" data-action="c-leave" data-room="${esc(form.room)}">I'm done with this room</button> <button class="link-btn" data-action="c-room-change">Change</button></span></div>`;
 }
 
 /**
@@ -297,7 +313,7 @@ function tracker(id) {
     : (r.parsed && r.parsed.primary_area !== 'other/unknown' ? cap(r.parsed.primary_area) : '');
   const issueTxt = `${issuesText(r)}${area && r.issue !== 'check_stock' ? ` · ${area}` : ''}${r.styleAxes?.length ? ` · ${r.styleAxes.map(cap).join(', ')}` : ''}`;
   return `
-    <div class="roombar"><span>📍 <strong>Room ${esc(r.room)}</strong></span>${open && list.length > 1 ? `<span class="muted small">Request ${idx + 1} of ${list.length}</span>` : ''}</div>
+    <div class="roombar"><span>📍 <strong>Room ${esc(r.room)}</strong></span><span>${open && list.length > 1 ? `<span class="muted small">Request ${idx + 1} of ${list.length}</span> ` : ''}<button class="link-btn" data-action="c-leave" data-room="${esc(r.room)}">I'm done with this room</button></span></div>
     <div class="card order">
       ${stepper(r, customerSteps(r), cancelled)}
       <div class="item-pill"><strong>${esc(sku ? `${prefix(sku)}${sku.colour} ${sku.name} · ${sku.size} ${sku.cut}` : '')}</strong>
