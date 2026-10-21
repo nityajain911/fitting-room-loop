@@ -1,0 +1,17 @@
+{
+  "name": "fitting-room-request-loop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype: closed-loop fitting-room request system driven by one shared event log",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.3.0"
+  }
+}

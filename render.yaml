@@ -1,0 +1,21 @@
+# Render Blueprint: free public deploy. Push this folder to a GitHub repo, then
+# Render dashboard -> New -> Blueprint -> pick the repo. Set CEREBRAS_API_KEY when prompted.
+services:
+  - type: web
+    name: fitting-room-loop
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: CEREBRAS_MODEL
+        value: gpt-oss-120b
+      - key: DEMO_CONTROLS
+        value: "false"
+      - key: ACCEPT_ESCALATE_SECONDS
+        value: "120"
+      - key: DELIVER_ESCALATE_SECONDS
+        value: "120"

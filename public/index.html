@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Fitting-Room Request Loop</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Fitting-Room Request Loop</div>
+    <a class="admin-link" href="#admin">Admin</a>
+    <div id="conn" class="conn" hidden>Reconnecting…</div>
+  </header>
+  <div id="demo-pill" class="demo-pill" hidden></div>
+  <main id="view" class="view" aria-live="polite"></main>
+  <nav class="tabs" aria-label="Screens">
+    <a href="#customer" data-tab="customer">Customer</a>
+    <a href="#associate" data-tab="associate">Associate</a>
+    <a href="#manager" data-tab="manager">Manager</a>
+  </nav>
+  <p class="sample-note">Illustrative sample data — not Tommy Hilfiger specifications</p>
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
