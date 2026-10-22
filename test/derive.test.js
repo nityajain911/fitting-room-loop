@@ -737,3 +737,52 @@ test('who reported an attempt is remembered', () => {
   assert.equal(r.cur.reportedBy, 'runner');
   assert.equal(r.pastRounds[0].reportedBy, 'customer');
 });
+
+// ---------- rejecting what the engine suggests, and "nothing fits" ----------
+const accepted = (add, id = 'r1') => {
+  add(0, id, 'created', { room: 1, skuId: 'OX-L-SLIM', issue: 'too_tight', issues: ['too_tight'], chips: ['chest'], parsed: null, method: 'none' }, 'customer');
+  add(0, id, 'routed', { role: 'runner', rule: 'x' });
+  add(1, id, 'accepted', { role: 'runner' }, 'runner');
+};
+const shown = (itemIds) => ({ kind: 'alternative', itemId: itemIds[0], options: itemIds.map((itemId) => ({ itemId })) });
+
+test('rejected items are remembered and never offered again, in any colour', () => {
+  const { events, add } = makeLog();
+  accepted(add);
+  add(2, 'r1', 'suggestion_shown', shown(['OX-XL-SLIM', 'OX-M-REG']));
+  add(3, 'r1', 'suggestion_rejected', { itemId: 'OX-XL-SLIM', itemIds: ['OX-XL-SLIM', 'OX-M-REG'], reason: 'more_options' }, 'runner');
+  const r = deriveAll(events).byId.r1;
+  assert.deepEqual(r.rejectedIds, ['OX-XL-SLIM', 'OX-M-REG']);
+  const ex = new Set(suggestionExclusions(r, CATALOGUE));
+  for (const id of ['OX-XL-SLIM', 'OX-XL-SLIM-NVY', 'OX-XL-SLIM-LBL', 'OX-M-REG', 'OX-M-REG-NVY']) assert.ok(ex.has(id), `${id} is excluded`);
+  assert.ok(!ex.has('OX-L-REG'), 'other fits are not');
+  // an older rejection that named one item still works
+  const { events: old, add: addOld } = makeLog();
+  accepted(addOld);
+  addOld(2, 'r1', 'suggestion_rejected', { itemId: 'OX-M-REG' }, 'runner');
+  assert.deepEqual(deriveAll(old).byId.r1.rejectedIds, ['OX-M-REG']);
+});
+
+test('"nothing fits": declared by the associate, or because the engine had nothing to offer; both are the same state', () => {
+  const { events, add } = makeLog();
+  accepted(add);
+  add(2, 'r1', 'suggestion_shown', shown(['OX-XL-SLIM']));
+  assert.deepEqual([deriveAll(events).byId.r1.noMatch, deriveAll(events).byId.r1.hadNoMatch], [false, false]);
+  add(3, 'r1', 'suggestion_rejected', { itemId: 'OX-XL-SLIM', itemIds: ['OX-XL-SLIM'], reason: 'no_match' }, 'runner');
+  add(3, 'r1', 'no_match', {}, 'runner');
+  let r = deriveAll(events).byId.r1;
+  assert.deepEqual([r.noMatch, r.hadNoMatch, r.noMatchBy, r.suggestionState], [true, true, 'runner', 'no_match']);
+
+  const { events: e2, add: a2 } = makeLog();
+  accepted(a2);
+  a2(2, 'r1', 'suggestion_shown', { kind: 'no_alternative', itemId: null, options: [], reason: 'Nothing close enough in stock' });
+  r = deriveAll(e2).byId.r1;
+  assert.deepEqual([r.noMatch, r.hadNoMatch], [true, true]);                    // the engine said no
+
+  const { events: e3, add: a3 } = makeLog();
+  accepted(a3);
+  a3(2, 'r1', 'suggestion_shown', { kind: 'no_alternative', itemId: null, options: [] });
+  a3(3, 'r1', 'suggestion_shown', shown(['OX-M-REG']));                          // then something else turned up (e.g. after a rack report)
+  r = deriveAll(e3).byId.r1;
+  assert.deepEqual([r.noMatch, r.hadNoMatch], [false, true]);                   // not in that state now, but it did happen
+});

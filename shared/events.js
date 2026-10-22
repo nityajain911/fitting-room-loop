@@ -3,7 +3,7 @@ export const EVENT_TYPES = [
   'created', 'routed', 'accepted', 'suggestion_shown', 'suggestion_confirmed',
   'suggestion_rejected', 'on_the_way', 'floor_pull_requested', 'floor_pull_done',
   'escalated', 'closed', 'cancelled', 'reason_added', 'inventory_discrepancy', 'item_declined', 'assisted', 'assigned', 'floor_pull_cancelled', 'delivered', 'tryon_feedback',
-  'restock_task_created', 'restock_task_done', 'room_released', 'round_opened',
+  'restock_task_created', 'restock_task_done', 'room_released', 'round_opened', 'no_match',
 ];
 
 export const UNKNOWN = 'other/unknown';

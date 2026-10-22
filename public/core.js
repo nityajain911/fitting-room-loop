@@ -166,7 +166,7 @@ export const itemName = (id) => {
 
 export const methodLabel = (method) =>
   method === 'rule_fallback' ? 'Rule-based fallback — not AI'
-    : method === 'system_rule' ? 'Recorded from a stock-discrepancy report (rule, not AI)'
+    : method === 'system_rule' ? 'Recorded by a rule from what happened on this request (not AI)'
     : method === 'quick_pick' ? 'Chosen by the associate (one tap, no AI)'
     : method?.startsWith('ai:') ? `Parsed by AI (${method.slice(3)})`
       : 'No free text';

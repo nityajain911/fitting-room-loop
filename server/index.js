@@ -434,6 +434,31 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     res.json({ ok: true, taskId });
   });
 
+  // Not these: the whole suggestion is turned down (never as a stock problem) and the engine is asked again, leaving out
+  // everything rejected so far, in every colour. When it has nothing left, the request is in the "nothing fits" state.
+  app.post('/api/requests/:id/more-options', (req, res) => {
+    const r = getRequest(req.params.id);
+    if (r.status !== 'accepted' || r.suggestionState !== 'shown') throw conflict('There is no suggestion to replace');
+    const ids = suggestionItemIds(r.suggestion);
+    if (!ids.length) throw conflict('There was nothing suggested to replace');
+    append(r.id, 'suggestion_rejected', actorOf(req, r), { itemId: ids[0], itemIds: ids, reason: 'more_options' });
+    const next = suggest(r.id);
+    append(r.id, 'suggestion_shown', actorOf(req, r), next);
+    res.json({ ok: true, found: suggestionItemIds(next).length });
+  });
+
+  // Nothing in stock fits this customer: the associate says so. The customer is told, and the request moves to the outcomes
+  // that make sense (cross-store order, save for later, left, or keeping what they have).
+  app.post('/api/requests/:id/no-match', (req, res) => {
+    const r = getRequest(req.params.id);
+    if (r.status !== 'accepted' || r.suggestionState !== 'shown') throw conflict('There is no suggestion to turn down');
+    const ids = suggestionItemIds(r.suggestion);
+    if (!ids.length) throw conflict('Nothing was suggested: that already means nothing fits');
+    append(r.id, 'suggestion_rejected', actorOf(req, r), { itemId: ids[0], itemIds: ids, reason: 'no_match' });
+    append(r.id, 'no_match', actorOf(req, r), {});
+    res.json({ ok: true });
+  });
+
   app.post('/api/requests/:id/reject', (req, res) => {
     const r = getRequest(req.params.id);
     if (r.status !== 'accepted' || r.suggestionState !== 'shown') throw conflict('No pending suggestion to reject');
@@ -527,6 +552,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     if (r.status === 'closed') throw conflict('Request already closed');
     if (r.status === 'cancelled') throw conflict('Request was cancelled by the customer');
     if (r.status === 'requested') throw conflict('Accept the request before closing it');
+    if (outcome === 'bought_alternative' && !r.keepable.length) throw conflict('Nothing was brought, so no alternative can have been bought');
     append(r.id, 'closed', actorOf(req, r), { outcome, ...(kept != null ? { itemId: kept } : {}) });
     res.json({ ok: true });
   });

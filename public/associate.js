@@ -56,6 +56,13 @@ handlers['a-toggle'] = (el) => {
   if (set.has(el.dataset.v)) set.delete(el.dataset.v); else set.add(el.dataset.v);
   rerender();
 };
+// Not these: reject the whole suggestion (not a stock problem) and ask the engine again, leaving out everything rejected.
+handlers['a-more'] = async (el) => {
+  const out = await post(`/api/requests/${el.dataset.v}/more-options`, { role: lastRole });
+  if (out) toast(out.found ? 'Here are other options.' : 'Nothing else in stock is close enough.');
+};
+// Nothing in stock fits this customer: the customer is told, and the outcomes that make sense are offered.
+handlers['a-nomatch'] = (el) => post(`/api/requests/${el.dataset.v}/no-match`, { role: lastRole });
 handlers['a-reject'] = (el) => post(`/api/requests/${el.dataset.v}/reject`, { role: lastRole });
 // The customer says it aloud at the door ("the M Regular is still tight on my waist"): the runner opens the next attempt here.
 const door = {}; // requestId -> { open, item, issues, chips } while the runner fills it in
@@ -109,6 +116,10 @@ handlers['a-next-best'] = async (el) => {
   toast(alt ? `Fallback: now go to Rack ${alt.rack}` : 'No in-stock alternative. See the options below.');
   document.querySelector('.fallback-card')?.classList.add('flash');
 };
+handlers['a-reason-nomatch'] = (el) => post(`/api/requests/${el.dataset.v}/reason`, {
+  reason_tag: 'stock_unavailable', summary_en: 'No suitable item in stock', evidence_type: 'system-observed', confidence: 1,
+  method: 'system_rule', edited: false, role: lastRole,
+});
 handlers['a-reason-system'] = (el) => post(`/api/requests/${el.dataset.v}/reason`, {
   reason_tag: 'stock_unavailable', summary_en: 'Item was reported missing on the rack (stock record wrong)',
   evidence_type: 'system-observed', confidence: 1, method: 'system_rule', edited: false, role: lastRole,
@@ -334,7 +345,7 @@ function urgentDetail(r, role) {
   const pre = r.status === 'requested';
   const onWay = r.status === 'on_the_way';
   const open = r.status === 'accepted' || onWay;
-  const stage3 = open && (onWay || !opts.length || r.suggestionState === 'rejected');
+  const stage3 = open && (onWay || !opts.length || r.suggestionState === 'rejected' || r.noMatch);
   const trip = onWay ? (r.onTheWay?.items || []).map((i) => getSku(i.itemId)).filter(Boolean) : [];
   let action = '';
   if (pre) {
@@ -368,7 +379,7 @@ function normalDetail(r, role, withHead) {
   // always one small tap away.
   const hasItem = !!(r.suggestion && (r.suggestion.itemId || r.suggestion.kind === 'stock_check'));
   const onWay = r.status === 'on_the_way';
-  const stage3 = open && (onWay || !hasItem || r.suggestionState === 'rejected');
+  const stage3 = open && (onWay || !hasItem || r.suggestionState === 'rejected' || r.noMatch);
   // Why it did not convert is only asked once the request has closed without a sale (not for sales or cancellations).
   const showReason = r.status === 'closed' && !SAVE_OUTCOMES.includes(r.outcome);
   return `
@@ -499,11 +510,23 @@ function comparisonTable(sku, opts, s) {
   <div class="small muted" style="margin-top:4px">Every measurement is shown. Highlighted rows are what the fix targets, and the others change too.</div>`;
 }
 
+/** What to do when nothing in stock fits: the outcomes that make sense, in plain words. The customer has been told. */
+function noMatchHelp(r, s) {
+  const alteration = s?.kind === 'alteration_or_crossstore';
+  return `<div class="card stack" style="margin-top:8px">
+    <strong>What next?</strong>
+    <div class="small">${alteration
+      ? 'Offer an alteration (hemming), or a cross-store order.'
+      : 'Offer a cross-store order, or to save it for later. The customer may also decide to keep what they have.'}
+      If they want none of that, close it as Left. The customer's screen already says there is no match in the store right now.</div>
+  </div>`;
+}
+
 function suggestionBlock(r, sku, role, compact = false) {
   const s = r.suggestion;
   const ids = suggestionItemIds(s);
   const opts = ids.map((id) => getSku(id)).filter(Boolean);
-  const hasItem = opts.length > 0;
+  const hasItem = opts.length > 0 && r.suggestionState !== 'no_match'; // once nothing fits, the items are no longer on offer
   const isOpenReq = r.status === 'accepted' || r.status === 'on_the_way';
   const canAct = r.suggestionState === 'shown' && hasItem && !r.itemDeclined;
   const sel = hasItem ? selection(r) : new Set();
@@ -531,8 +554,11 @@ function suggestionBlock(r, sku, role, compact = false) {
     body += comparisons(r, s, opts, sku);
     if (s.reason && opts.length === 1) body += `<p>${esc(s.reason)}</p>`;
   } else {
-    body += `<div class="banner ${s.kind === 'alteration_or_crossstore' ? 'info' : 'alert'}"><strong>${esc(s.reason)}</strong></div>`;
-    if (s.drivers?.length) {
+    body += r.suggestionState === 'no_match'
+      ? `<div class="banner alert"><strong>You marked that nothing in stock fits this customer.</strong></div>`
+      : `<div class="banner ${s.kind === 'alteration_or_crossstore' ? 'info' : 'alert'}"><strong>${esc(s.reason)}</strong></div>`;
+    if (r.noMatch) body += noMatchHelp(r, s);
+    if (s.drivers?.length && r.suggestionState !== 'no_match') {
       body += `<div class="small muted">Checked: ${s.drivers.map((d) => `${esc(MEASURE_LABELS[d.measure] || d.measure)} ${d.original} cm`).join(', ')} — no in-stock item improves it.</div>`;
     }
   }
@@ -582,7 +608,8 @@ function suggestionBlock(r, sku, role, compact = false) {
     actions = `<div class="stack" style="margin-top:12px">
       <button class="btn primary block" data-action="a-confirm" data-v="${esc(r.id)}" ${sel.size ? '' : 'disabled'}>Confirm &amp; bring ${sel.size === opts.length && opts.length > 1 ? 'all ' : ''}${sel.size}</button>
       ${role === 'runner' ? `<button class="btn block" data-action="a-confirm" data-pull="1" data-v="${esc(r.id)}" ${sel.size ? '' : 'disabled'}>Confirm &amp; ask floor to pull</button>` : ''}
-      <button class="btn danger block" data-action="a-reject" data-v="${esc(r.id)}">Reject</button></div>`;
+      <button class="btn block" data-action="a-more" data-v="${esc(r.id)}">None of these — show other options</button>
+      <button class="btn danger block" data-action="a-nomatch" data-v="${esc(r.id)}">Nothing in stock fits</button></div>`;
   } else if (r.suggestionState === 'rejected') {
     actions = '<div class="banner alert" style="margin-top:10px">Suggestion rejected (recorded)</div>';
   }
@@ -636,9 +663,10 @@ function closeBlock(r) {
   // names it: one tap each. That is also what lets the next request from the same room use what this customer's fit turned out to be.
   const kept = r.keepable.filter((id) => getSku(id));
   const label = (id) => { const b = getSku(r.baseOf?.[id]) || getSku(r.skuId); return b ? tripItemName(b, getSku(id)) : itemName(id); };
-  const buttons = Object.entries(OUTCOMES).flatMap(([k, v]) => (k === 'bought_alternative' && kept.length > 1
-    ? kept.map((id) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}" data-item="${esc(id)}">Bought ${esc(label(id))}</button>`)
-    : [`<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}">${esc(v)}</button>`]));
+  const buttons = Object.entries(OUTCOMES).flatMap(([k, v]) => (k === 'bought_alternative' && !kept.length ? [] // nothing was brought
+    : k === 'bought_alternative' && kept.length > 1
+      ? kept.map((id) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}" data-item="${esc(id)}">Bought ${esc(label(id))}</button>`)
+      : [`<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}">${esc(v)}</button>`]));
   return `<h2>Outcome</h2><div class="btn-grid">${buttons.join('')}</div>`;
 }
 
@@ -652,6 +680,9 @@ function reasonBlock(r) {
   const aiMode = S.parser?.mode === 'ai';
   const rkey = `reason:${r.id}`;
   return `<details class="sec" data-sec="${esc(rkey)}" ${openAttr(rkey, true)}><summary>Why didn't it convert? (optional)</summary><div class="card stack">
+    ${(!last && r.status === 'closed' && ['left', 'saved_for_later'].includes(r.outcome) && r.hadNoMatch) ? `<div class="banner info">
+      Nothing in stock fitted this customer.
+      <button class="btn block" style="margin-top:8px" data-action="a-reason-nomatch" data-v="${esc(r.id)}">Record reason: no suitable item in stock</button></div>` : ''}
     ${(!last && r.status === 'closed' && ['left', 'saved_for_later'].includes(r.outcome) && r.discrepancies.length) ? `<div class="banner info">
       An item was reported missing on the rack for this request.
       <button class="btn block" style="margin-top:8px" data-action="a-reason-system" data-v="${esc(r.id)}">Record reason: stock record wrong (system-observed)</button></div>` : ''}

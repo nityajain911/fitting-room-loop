@@ -15,16 +15,18 @@ const snapshotOf = (r) => ({
 export const roundsOf = (r) => [...r.pastRounds, snapshotOf(r)];
 
 /**
- * Everything the next suggestion must leave out. From the second attempt on this includes what was already tried in EVERY
+ * Everything the next suggestion must leave out (rack reports, declined and rejected items, and what was tried). From the second attempt on this includes what was already tried in EVERY
  * colour: items of the same line, size and cut have the same measurements, so another colour of something that did not
  * fit will not fit either. A rack report or a declined item is about that one SKU only.
  */
 export function suggestionExclusions(req, catalogue = CATALOGUE) {
   const out = new Set(excludedIds(req));
-  if (req.round > 1) {
+  // Rejected suggestions count too: if the associate turned a fit down, its other colours are no better.
+  const seeds = [...(req.round > 1 ? req.triedIds : []), ...req.rejectedIds];
+  if (seeds.length) {
     const fit = (s) => `${s.line ?? `${s.category}|${s.fabric}`}|${s.size}|${s.cut}`;
-    const tried = new Set(req.triedIds.map((id) => getSku(id, catalogue)).filter(Boolean).map(fit));
-    for (const s of catalogue) if (tried.has(fit(s))) out.add(s.id);
+    const bad = new Set(seeds.map((id) => getSku(id, catalogue)).filter(Boolean).map(fit));
+    for (const s of catalogue) if (bad.has(fit(s))) out.add(s.id);
   }
   return [...out];
 }
@@ -58,6 +60,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           // is the current attempt's. Earlier attempts are kept, frozen, in `pastRounds`.
           round: 1, roundStartTs: e.ts, roundAcceptedTs: null,
           cur: { skuIds: [p.skuId], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none', reportedBy: 'customer' },
+          rejectedIds: [], noMatch: false, hadNoMatch: false, noMatchBy: null,
           pastRounds: [], triedIds: [p.skuId], deliveredIds: [], reportedIds: [], reportable: [], keepable: [], baseOf: {}, previousOwnerStaffId: null,
           skill: null, assignments: [], openToAll: false, acceptedStaffId: null, acceptedTier: null,
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
@@ -102,6 +105,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         if (!r) break;
         r.suggestion = p;
         r.suggestionState = 'shown';
+        if (!(p.options?.length || p.itemId)) r.hadNoMatch = true; // the engine had nothing close enough to offer
         if (r.itemDeclined) { // the customer declined the previous item: it is no longer on its way
           r.itemDeclined = null; r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.deliveredBy = null; r.confirmedItemId = null;
           if (r.status === 'on_the_way') r.status = 'accepted';
@@ -115,7 +119,16 @@ export function deriveAll(events, catalogue = CATALOGUE) {
       }
       case 'suggestion_rejected': {
         const r = get(e.requestId);
-        if (r) r.suggestionState = 'rejected';
+        if (r) {
+          r.suggestionState = 'rejected';
+          for (const id of p.itemIds || (p.itemId ? [p.itemId] : [])) if (!r.rejectedIds.includes(id)) r.rejectedIds.push(id); // never offered again
+        }
+        break;
+      }
+      case 'no_match': {
+        // The associate says nothing in stock fits this customer.
+        const r = get(e.requestId);
+        if (r && r.kind === 'request') { r.suggestionState = 'no_match'; r.hadNoMatch = true; r.noMatchBy = e.actor ?? null; }
         break;
       }
       case 'on_the_way': {
@@ -281,6 +294,10 @@ export function deriveAll(events, catalogue = CATALOGUE) {
     const touched = byId[e.requestId]; // last activity, for the empty-room timeout (a pull's activity counts for its request)
     if (touched) { touched.lastTs = e.ts; if (touched.parentId && byId[touched.parentId]) byId[touched.parentId].lastTs = e.ts; }
   }
+  for (const r of requests) {
+    // Nothing fits right now: the associate said so, or the engine's latest answer has nothing in it.
+    r.noMatch = r.suggestionState === 'no_match' || (r.suggestionState === 'shown' && !!r.suggestion && !(r.suggestion.options?.length || r.suggestion.itemId));
+  }
   for (const r of requests) { r.reportable = r.deliveredIds.filter((id) => !r.reportedIds.includes(id)); r.keepable = keepableOf(r); }
   // A cancelled request takes its unfinished floor pulls with it.
   for (const t of tasks) {
@@ -373,4 +390,4 @@ export const effectiveCatalogue = (catalogue, counts) =>
   catalogue.map((s) => (counts[s.id] ? { ...s, stock: Math.max(0, s.stock - counts[s.id]) } : s));
 
 /** SKUs this request must not be offered again: reported missing on the rack, declined, and (from the second attempt) everything already tried. */
-export const excludedIds = (req) => [...new Set([...req.discrepancies.map((d) => d.skuId), ...req.declinedIds, ...(req.round > 1 ? req.triedIds : [])])];
+export const excludedIds = (req) => [...new Set([...req.discrepancies.map((d) => d.skuId), ...req.declinedIds, ...req.rejectedIds, ...(req.round > 1 ? req.triedIds : [])])];

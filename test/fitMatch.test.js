@@ -142,11 +142,15 @@ test('another_style picks other cut at the same size, else none', () => {
   assert.equal(r.itemId, 'OX-L-REG');
 });
 
-test('check_stock lists up to 4 in-stock items of same category and fabric, excluding the original', () => {
+test('check_stock lists same-style items in the same size or cut, and nothing that differs in both', () => {
+  // The fixture's only other items are Regular cuts in other sizes: not something to bring for a stock check of an L Slim.
   const r = run(oxford, { issue: 'check_stock', chips: [], parsed: null });
-  assert.equal(r.kind, 'stock_check');
-  assert.deepEqual([...r.optionIds].sort(), ['OX-M-REG', 'OX-XL-REG']);
-  assert.ok(r.optionIds.length <= 4);
+  assert.equal(r.kind, 'no_alternative');
+  const navy = { ...oxford, id: 'OX-L-SLIM-NVY', colour: 'Navy', stock: 2 };
+  const withColour = fitMatch({ sku: oxford, issueInfo: mergeIssue({ sku: oxford, issue: 'check_stock', chips: [], parsed: null }), catalogue: [...CATALOGUE, navy], config });
+  assert.equal(withColour.kind, 'stock_check');
+  assert.deepEqual([...withColour.optionIds], ['OX-L-SLIM-NVY']);
+  assert.ok(withColour.optionIds.length <= 4);
 });
 
 import { describeChange } from '../shared/fitMatch.js';
@@ -175,8 +179,11 @@ test('excludeIds removes reported-missing / declined SKUs and surfaces the next 
   const first = fitMatch({ sku: oxford, issueInfo: info, catalogue: CATALOGUE, config });
   assert.equal(first.itemId, 'OX-M-REG');
   const next = fitMatch({ sku: oxford, issueInfo: info, catalogue: CATALOGUE, config, excludeIds: ['OX-M-REG'] });
-  assert.equal(next.itemId, 'OX-XL-REG'); // #2: roomier waist but longer sleeve
-  assert.equal(next.fixesSecondary, false);
+  // The only other roomier shirt (XL Regular) would add 14 cm to the waist: too far off to bring, so the engine says no.
+  assert.equal(next.kind, 'no_alternative');
+  assert.equal(next.itemId, null);
+  assert.equal(next.nearMiss.itemId, 'OX-XL-REG');
+  assert.match(next.reason, /waist/);
   assert.deepEqual(next.excluded, ['OX-M-REG']);
   const none = fitMatch({ sku: oxford, issueInfo: info, catalogue: CATALOGUE, config, excludeIds: ['OX-M-REG', 'OX-XL-REG'] });
   assert.equal(none.kind, 'no_alternative');
@@ -193,8 +200,10 @@ test('excluding the only shorter inseam still ends in the hemming branch', () =>
 
 test('stock-check options also honour excludeIds', () => {
   const info = mergeIssue({ sku: oxford, issue: 'check_stock', chips: [], parsed: null });
-  const r = fitMatch({ sku: oxford, issueInfo: info, catalogue: CATALOGUE, config, excludeIds: ['OX-M-REG'] });
-  assert.deepEqual(r.optionIds, ['OX-XL-REG']);
+  const navy = { ...oxford, id: 'OX-L-SLIM-NVY', colour: 'Navy', stock: 2 };
+  const lbl = { ...oxford, id: 'OX-L-SLIM-LBL', colour: 'Light Blue', stock: 2 };
+  const r = fitMatch({ sku: oxford, issueInfo: info, catalogue: [...CATALOGUE, navy, lbl], config, excludeIds: ['OX-L-SLIM-NVY'] });
+  assert.deepEqual(r.optionIds, ['OX-L-SLIM-LBL']);
 });
 
 // ---------- colour awareness, jeans, richer stock check ----------
@@ -411,7 +420,7 @@ test('fit: several distinct fits in one trip, best first; the same fit in other 
   const orig = topLine('A', 'Oxford Shirt', [['L', 'Slim', 98, 112]])[0];
   const cat = [
     orig,
-    ...topLine('A', 'Oxford Shirt', [['M', 'Regular', 104, 110], ['L', 'Regular', 108, 115], ['XL', 'Regular', 112, 120], ['XXL', 'Regular', 116, 125]], ['White', 'Light Blue', 'Navy']),
+    ...topLine('A', 'Oxford Shirt', [['M', 'Regular', 102, 110], ['L', 'Regular', 105, 114], ['XL', 'Regular', 108, 118], ['XXL', 'Regular', 110, 122]], ['White', 'Light Blue', 'Navy']),
   ];
   const info = mergeIssue({ sku: orig, issue: 'too_tight', chips: ['waist'], parsed: null });
   const r = fitMatch({ sku: orig, issueInfo: info, catalogue: cat, config });

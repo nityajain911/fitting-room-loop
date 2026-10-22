@@ -2,6 +2,7 @@
 // and in-stock catalogue items are ranked by explicit rules.
 import { CHIPS, FIT_ISSUES, ISSUE_TO_WORD, UNKNOWN, STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from './events.js';
 import { MEASURE_LABELS } from './catalogue.js';
+import { DEFAULTS } from './config.js';
 
 const DIR = { tight: +1, loose: -1, long: -1, short: +1 };
 
@@ -107,11 +108,12 @@ export function mergeIssue({ sku, issue, issues = null, chips = [], styleAxes = 
   return info;
 }
 
+// Position on the size scale, so "how many sizes away" means the same thing whichever sizes happen to be in stock.
+// Letter sizes have a fixed order; numeric (waist) sizes are ranked among the sizes the catalogue has.
+const LETTER_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 const sizeIndex = (sku, catalogue) => {
-  const sizes = [...new Set(catalogue.filter((s) => s.category === sku.category).map((s) => s.size))];
-  const order = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
-  const key = (z) => (order.includes(z) ? order.indexOf(z) : Number(z));
-  return (s) => [...sizes].sort((a, b) => key(a) - key(b)).indexOf(s.size);
+  const numeric = [...new Set(catalogue.filter((s) => s.category === sku.category && !LETTER_SIZES.includes(s.size)).map((s) => Number(s.size)))].sort((a, b) => a - b);
+  return (s) => (LETTER_SIZES.includes(s.size) ? LETTER_SIZES.indexOf(s.size) : numeric.indexOf(Number(s.size)));
 };
 
 // Total difference over the measurements two garments share: smaller means a closer fit.
@@ -221,10 +223,18 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
 
   if (issueInfo.issue === 'another_size') {
     const idx = sizeIndex(sku, catalogue);
-    const cands = stocked
+    const maxSteps = config.maxSizeSteps ?? DEFAULTS.maxSizeSteps;
+    const steps = (s) => Math.abs(idx(s) - idx(sku));
+    const sameCutSizes = stocked
       .filter((s) => s.cut === sku.cut && s.size !== sku.size)
-      .sort((a, b) => Math.abs(idx(a) - idx(sku)) - Math.abs(idx(b) - idx(sku)) || sameColour(b, sku) - sameColour(a, sku) || (a.id < b.id ? -1 : 1));
-    if (!cands.length) return { ...out, kind: 'no_alternative', reason: NO_ALT };
+      .sort((a, b) => steps(a) - steps(b) || sameColour(b, sku) - sameColour(a, sku) || (a.id < b.id ? -1 : 1));
+    const cands = sameCutSizes.filter((s) => steps(s) <= maxSteps); // a size five away is not "another size", it is a different customer
+    if (!cands.length) {
+      const reason = sameCutSizes.length
+        ? `Nothing close enough in stock: the nearest size (${sameCutSizes[0].size}) is ${steps(sameCutSizes[0])} sizes away, more than the ${maxSteps} allowed`
+        : NO_ALT;
+      return { ...out, kind: 'no_alternative', reason };
+    }
     return {
       ...out, kind: 'alternative_size', itemId: cands[0].id,
       options: distinctBy(cands, (s) => s.size, K).map((s) => ({ itemId: s.id })),
@@ -292,7 +302,10 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
   if (issueInfo.issue === 'check_stock') {
     // Same size and cut in other colours first (that is what "another colour" means), then same size, then same cut.
     const closeness = (s) => (s.size === sku.size && s.cut === sku.cut ? 0 : s.size === sku.size ? 1 : s.cut === sku.cut ? 2 : 3);
+    const idx = sizeIndex(sku, catalogue);
+    const maxSteps = config.maxSizeSteps ?? DEFAULTS.maxSizeSteps;
     const cands = stocked
+      .filter((s) => closeness(s) < 3 && Math.abs(idx(s) - idx(sku)) <= maxSteps) // not a different size AND cut, and not far away
       .sort((a, b) => closeness(a) - closeness(b) || sameColour(b, sku) - sameColour(a, sku) || (a.id < b.id ? -1 : 1))
       .slice(0, Math.max(K, 4)); // a stock check may show a few more than the trip carries
     if (!cands.length) return { ...out, kind: 'no_alternative', reason: 'Nothing else in this style is in stock — consider cross-store order' };
@@ -311,8 +324,35 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
   // are the only ones offered; otherwise the best partial fits are shown and the issue left unfixed is named.
   const two = !!secondary && (issueInfo.issues?.length ?? 1) > 1;
   const fixes = (alt, t) => !!t && gain(alt, t) >= min - 1e-9;
-  const scored = stocked
-    .filter((s) => fixes(s, primary) || (two && fixes(s, secondary)))
+  const kindOfGarment = TROUSERS.has(sku.category) ? 'trousers' : 'top';
+  const limits = config.fitLimits?.[kindOfGarment] ?? DEFAULTS.fitLimits[kindOfGarment];
+  const capOf = (m) => limits[m] ?? 12;
+  const targets = [primary, ...(two ? [secondary] : [])].filter((t) => t?.measure);
+  const delta = (alt, m) => (m in alt.m && m in sku.m ? alt.m[m] - sku.m[m] : 0);
+
+  /**
+   * Is this item close enough to be a real answer, or would bringing it be force-fitting? Three rules: what is being fixed
+   * must not move further than the limit for that measurement; an issue it does not fix must not get clearly worse; and
+   * nothing else may change by more than its own limit. Returns the first rule it breaks, or null.
+   */
+  const breaks = (alt) => {
+    for (const t of targets) {
+      const g = gain(alt, t);
+      if (g >= min - 1e-9) {
+        if (Math.abs(delta(alt, t.measure)) > capOf(t.measure) + 1e-9) return { rule: 'far', measure: t.measure, by: Math.abs(delta(alt, t.measure)), cap: capOf(t.measure) };
+      } else if (-g > min + 1e-9) {
+        return { rule: 'worse', measure: t.measure, by: Math.abs(delta(alt, t.measure)), cap: min };
+      }
+    }
+    for (const k of Object.keys(sku.m)) {
+      if (targets.some((t) => t.measure === k) || !(k in alt.m)) continue;
+      if (Math.abs(alt.m[k] - sku.m[k]) > capOf(k) + 1e-9) return { rule: 'side', measure: k, by: Math.abs(alt.m[k] - sku.m[k]), cap: capOf(k) };
+    }
+    return null;
+  };
+  const direction = stocked.filter((s) => fixes(s, primary) || (two && fixes(s, secondary)));
+  const scored = direction
+    .filter((s) => !breaks(s))
     .map((s) => {
       const fixesPrimary = fixes(s, primary);
       const fixesSecondary = fixes(s, secondary);
@@ -347,14 +387,24 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
   const driverOnly = primary.measure && primary.measure in sku.m
     ? [{ measure: primary.measure, original: sku.m[primary.measure], alt: null, delta: null, role: 'primary' }]
     : [];
+  // Something in stock moves the right way but is too far off: say so, and name the nearest and the rule it breaks.
+  const nearest = direction.map((alt) => ({ alt, b: breaks(alt) })).filter((x) => x.b)
+    .sort((x, y) => Math.abs(delta(x.alt, primary.measure)) - Math.abs(delta(y.alt, primary.measure)) || (x.alt.id < y.alt.id ? -1 : 1))[0];
+  const nearMiss = nearest ? {
+    itemId: nearest.alt.id, ...nearest.b,
+    reason: `Nothing close enough in stock: the nearest option (${nearest.alt.cut} ${nearest.alt.size}${colourNote(nearest.alt, sku)}) ${
+      nearest.b.rule === 'worse' ? `would make ${label(nearest.b.measure)} ${nearest.b.by} cm worse`
+        : nearest.b.rule === 'side' ? `would also change ${label(nearest.b.measure)} by ${nearest.b.by} cm, more than the ${nearest.b.cap} cm limit`
+          : `would change ${label(nearest.b.measure)} by ${nearest.b.by} cm, more than the ${nearest.b.cap} cm limit`} — consider a cross-store order`,
+  } : null;
   const hemTarget = [primary, secondary].find((t) => t && TROUSERS.has(sku.category) && t.measure === 'inseam' && t.dir < 0);
   if (hemTarget) {
     const reason = config.alterationOffered
       ? 'No shorter inseam in stock — eligible for in-store hemming (if the store offers alteration — prototype setting) or cross-store order'
       : 'No shorter inseam in stock — consider cross-store order';
-    return { ...out, kind: 'alteration_or_crossstore', drivers: driverOnly, reason };
+    return { ...out, kind: 'alteration_or_crossstore', drivers: driverOnly, reason, ...(nearMiss ? { nearMiss } : {}) };
   }
-  return { ...out, kind: 'no_alternative', drivers: driverOnly, reason: NO_ALT };
+  return { ...out, kind: 'no_alternative', drivers: driverOnly, reason: nearMiss ? nearMiss.reason : NO_ALT, ...(nearMiss ? { nearMiss } : {}) };
 }
 
 /**

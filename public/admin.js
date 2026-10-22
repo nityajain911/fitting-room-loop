@@ -76,6 +76,7 @@ export function render() {
 
     <h2>Prototype settings</h2>
     <div class="settings">
+      closeness limits (a bigger change is not offered): tops chest ${c?.fitLimits?.top.chest ?? '–'} · waist ${c?.fitLimits?.top.waist ?? '–'} · length ${c?.fitLimits?.top.length ?? '–'} cm, trousers waist ${c?.fitLimits?.trousers.waist ?? '–'} · inseam ${c?.fitLimits?.trousers.inseam ?? '–'} cm, at most ${c?.maxSizeSteps ?? '–'} sizes away ·
       alteration offered: ${c ? (c.alterationOffered ? 'yes' : 'no') : '–'} · min improvement ${c?.minImprovementCm ?? '–'} cm ·
       small sample below n=${c?.smallSampleN ?? '–'} ·
       signals need ≥${c?.signalMinN ?? '–'} requests and ≥${c ? Math.round(c.signalMinShare * 100) : '–'}% share, rack recount after ${c?.signalMinMisses ?? '–'}+ report, high demand at ${c?.signalMinPulls ?? '–'}+ replacements · bring up to ${c?.bringCount ?? '–'} items per trip ·
@@ -99,6 +100,7 @@ export function render() {
       <div class="row"><span>Closed as a purchase after a try-on (recorded by staff)</span><strong>${m.boughtAfterTryOn}</strong></div>
       <div class="row"><span>Second attempts and later: median to accept / to hand over (n)</span><strong>${fmtDur(m.laterAttempts.medianAcceptMs)} / ${fmtDur(m.laterAttempts.medianDeliverMs)} (${m.laterAttempts.n})</strong></div>
       <div class="row"><span>Requests that needed another attempt / of those, saved</span><strong>${m.retried} / ${m.savedAfterRetry}</strong></div>
+      <div class="row"><span>Requests where nothing in stock fitted (the engine said no, or the associate did)</span><strong>${m.noMatchRequests}</strong></div>
       <div class="row"><span>Attempts in total</span><strong>${m.rounds}</strong></div>
       <div class="row"><span>Restock tasks from the Manager: done / sent</span><strong>${m.restock.done} / ${m.restock.requested}</strong></div>
       <div class="row"><span>Floor pulls done / requested</span><strong>${m.floorPullsDone} / ${m.floorPullsRequested}</strong></div>

@@ -12,6 +12,11 @@ export const DEFAULTS = {
   signalMinShare: 0.6, // ...and at least this share of them to point the same way
   signalMinMisses: 1, // a rack is flagged for a recount after this many "not on rack" reports
   signalMinPulls: 2, // a replacement brought to the fitting rooms this many times is flagged as high demand
+  // How far an item may be from what the customer has before the engine says no instead of force-fitting it (cm, per kind of
+  // garment). It applies to the measurement being fixed, to anything else it would change as a side effect, and to a second
+  // issue it would make worse. The sample catalogue moves a top about 5 cm in the chest per size.
+  fitLimits: { top: { chest: 10, waist: 12, shoulder: 4, sleeve: 6, length: 8 }, trousers: { waist: 6, hip: 8, inseam: 6 } },
+  maxSizeSteps: 2, // "another size" and stock checks look at most this many sizes either side
   bringCount: 3, // how many best options a runner brings in one trip (1 to 5)
   primaryWaitSeconds: 20, // a request is with its primary person this long, then a secondary person is added
   secondaryWaitSeconds: 20, // ...and with the secondary this long, then it opens to everyone
@@ -40,6 +45,8 @@ export function makeConfig(env = {}) {
     signalMinShare: num(env.SIGNAL_MIN_SHARE, DEFAULTS.signalMinShare) <= 1 ? num(env.SIGNAL_MIN_SHARE, DEFAULTS.signalMinShare) : DEFAULTS.signalMinShare,
     signalMinMisses: num(env.SIGNAL_MIN_MISSES, DEFAULTS.signalMinMisses),
     signalMinPulls: num(env.SIGNAL_MIN_PULLS, DEFAULTS.signalMinPulls),
+    fitLimits: DEFAULTS.fitLimits,
+    maxSizeSteps: Math.max(1, Math.floor(num(env.MAX_SIZE_STEPS, DEFAULTS.maxSizeSteps))),
     bringCount: Math.min(5, Math.max(1, Math.floor(num(env.BRING_COUNT, DEFAULTS.bringCount)))),
     primaryWaitSeconds: num(env.PRIMARY_WAIT_SECONDS, DEFAULTS.primaryWaitSeconds),
     secondaryWaitSeconds: num(env.SECONDARY_WAIT_SECONDS, DEFAULTS.secondaryWaitSeconds),

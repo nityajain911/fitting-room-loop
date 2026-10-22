@@ -115,6 +115,7 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     tryOn: { fits: allRounds.filter((d) => d.tryOn?.result === 'fits').length, notRight: allRounds.filter((d) => d.tryOn?.result === 'not_right').length, done: allRounds.filter((d) => d.tryOn?.result === 'no_more').length },
     boughtAfterTryOn: closedReqs.filter((r) => r.deliveredTs != null && SAVE_OUTCOMES.includes(r.outcome)).length,
     laterAttempts: laterAttempts(allRounds),
+    noMatchRequests: requests.filter((r) => r.hadNoMatch).length, // nothing in stock fitted (engine or associate)
     rounds: allRounds.length,
     retried: requests.filter((r) => r.round > 1).length, // needed another attempt
     savedAfterRetry: closedReqs.filter((r) => r.round > 1 && SAVE_OUTCOMES.includes(r.outcome)).length,
@@ -158,7 +159,7 @@ function bySku(requests, catalogue, discrepancies = {}) {
     g.declined += r.declinedIds.length;
     if (r.status === 'cancelled') g.cancelled += 1;
     if (r.status === 'closed') { g.closed += 1; if (SAVE_OUTCOMES.includes(r.outcome)) g.saves += 1; }
-    if (r.suggestion) { g.suggested += 1; if (NO_ALT_KINDS.includes(r.suggestion.kind)) g.noAlternative += 1; }
+    if (r.suggestion) { g.suggested += 1; if (r.hadNoMatch || NO_ALT_KINDS.includes(r.suggestion.kind)) g.noAlternative += 1; } // the engine said no, or the associate found nothing that fits
     const info = mergeIssue({ sku, issue: r.issue, issues: r.issues, chips: r.chips, parsed: r.parsed, parseMethod: r.method });
     // One count per issue the customer named; a request with two issues counts under both.
     const named = info.issues.length > 1 ? [[info.issues[0], info.primary], [info.issues[1], info.secondary]] : [[r.issue, info.primary]];

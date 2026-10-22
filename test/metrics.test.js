@@ -535,3 +535,19 @@ test('response times of the second attempt and later are reported on their own',
   assert.equal(m.medianDeliverMs, 30_000);                                    // the headline is still the first attempt
   assert.deepEqual(computeMetrics([]).laterAttempts, { n: 0, medianAcceptMs: null, medianDeliverMs: null });
 });
+
+// ---------- nothing fits ----------
+test('requests where nothing in stock fitted are counted, and feed the stock-gap signal for that garment', () => {
+  const { events, add } = makeLog();
+  for (const id of ['a', 'b', 'c']) {
+    mk(add, id, 0, { skuId: 'OX-M-SLIM' }); add(1, id, 'accepted', { role: 'runner' });
+    add(2, id, 'suggestion_shown', { kind: 'alternative', itemId: 'OX-L-SLIM', options: [{ itemId: 'OX-L-SLIM' }] });
+    add(3, id, 'suggestion_rejected', { itemId: 'OX-L-SLIM', itemIds: ['OX-L-SLIM'], reason: 'no_match' }, 'runner');
+    add(3, id, 'no_match', {}, 'runner');
+  }
+  const m = computeMetrics(events, undefined, cfg);
+  assert.equal(m.noMatchRequests, 3);
+  const gap = m.signals.find((x) => x.kind === 'stock_gap');
+  assert.ok(gap && gap.skuId === 'OX-M-SLIM');                                   // 3 of 3 suggestions ended with nothing that fits
+  assert.equal(computeMetrics([]).noMatchRequests, 0);
+});

@@ -4,15 +4,16 @@
 //   form     (#customer)      — pick the garment and the problem. The room is locked into a header pill.
 //   tracker  (#customer/<id>) — one active order card. The form is not rendered, so nothing can be edited by accident.
 import { S, hooks, handlers, api, act, esc, toast, issuesText, itemName, STAGE_TEXT } from './core.js';
-import { toggleIssue, FITTING_ROOMS } from '/shared/events.js';
+import { toggleIssue } from '/shared/events.js';
 import { CATALOGUE, garments, getSku, stylesFor } from '/shared/catalogue.js';
 import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
 import { tripItemName } from '/shared/visuals.js';
 
-// Each tablet lives in one fitting room. It learns its room once, from its link (/#customer?room=3, one per door), and
-// remembers it. Customers never choose or change it: the screen has no room picker.
+// Each tablet lives in one fitting room, and the customer is never asked which. The prototype runs as Room 1 and does not
+// show it; a tablet can be given another room once, from its link (/#customer?room=3, one per door), and remembers it.
+const DEFAULT_ROOM = 1;
 const ROOM_KEY = 'frl.room';
 const pairedRoom = () => {
   try { const n = Number(localStorage.getItem(ROOM_KEY)); return Number.isInteger(n) && n >= 1 && n <= 99 ? n : null; } catch { return null; }
@@ -41,7 +42,6 @@ const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 const opt = (action, v, label, on, cls = '') =>
   `<button type="button" class="opt ${cls} ${on ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
 
-handlers['c-room'] = (el) => { form.room = Number(el.dataset.v); pairRoom(form.room); hooks.render(); }; // first-time setup of this tablet
 handlers['c-dept'] = (el) => {
   if (form.dept === el.dataset.v) return;
   // sizes and designs differ by department, so the garment starts over; the issue and body areas are about the
@@ -103,8 +103,8 @@ handlers['c-leave'] = async (el) => {
   const room = Number(el.dataset.room);
   const open = roomOpen(room).length;
   const msg = open
-    ? `You have ${open} open request${open > 1 ? 's' : ''} in Room ${room}. Leaving will cancel ${open > 1 ? 'them' : 'it'}. Leave the room?`
-    : `Done with Room ${room}?`;
+    ? `You have ${open} open request${open > 1 ? 's' : ''}. Leaving will cancel ${open > 1 ? 'them' : 'it'}. Are you done with this room?`
+    : 'Are you done with this room?';
   if (!confirm(msg)) return;
   const out = await act(() => api('POST', `/api/rooms/${room}/release`));
   if (!out) return;
@@ -188,7 +188,7 @@ async function submitFollowUps() {
 export function render({ args, query }) {
   const n = Number(query?.get('room'));
   if (Number.isInteger(n) && n >= 1 && n <= 99) { pairRoom(n); form.room = n; } // this tablet's link sets (or resets) its room
-  else if (!form.room) form.room = pairedRoom();
+  else if (!form.room) form.room = pairedRoom() ?? DEFAULT_ROOM;
   const from = query?.get('from');
   if (from && form.followsId !== from && !args[0]) startFollowUp(from);
   if (!from && form.followsId) Object.assign(form, { followsId: null, followItem: null }); // left the follow-up: back to the normal form
@@ -199,7 +199,7 @@ const roomOpen = (room) => S.derived.requests.filter((r) => r.room === room && i
 
 /** The room, locked into the header once chosen. */
 function roomBar() {
-  return `<div class="roombar"><span>📍 <strong>Room ${esc(form.room)}</strong></span>
+  return `<div class="roombar"><span></span>
     <span><button class="link-btn" data-action="c-leave" data-room="${esc(form.room)}">I'm done with this room</button></span></div>`;
 }
 
@@ -238,7 +238,6 @@ function followUpView() {
   return `
     <div class="row"><h1>Which one came closest?</h1><span class="badge-anon">🔒 Anonymous</span></div>
     <a class="back-link" href="#customer/${esc(original.id)}">✕ Cancel — back to your request</a>
-    <div class="roombar"><span>📍 <strong>Room ${esc(original.room)}</strong></span></div>
 
     <h2>${items.length > 1 ? 'Which item came closest to fitting?' : 'The item we brought'}</h2>
     <div class="opts">${items.map((id) => opt('c-pick', id, broughtName(original, id), chosen === id)).join('')}</div>
@@ -256,15 +255,7 @@ function followUpView() {
     </div>`;
 }
 
-/** Only on a tablet that has never been told its room. Customers do not see this: it is set up once, from the room's link. */
-function setupView() {
-  return `<div class="row"><h1>Set up this tablet</h1></div>
-    <p class="muted">Which fitting room is this tablet in? It remembers the answer. (Admin has a link for each room.)</p>
-    <div class="opts">${FITTING_ROOMS.map((r) => opt('c-room', r, `Room ${r}`, false)).join('')}</div>`;
-}
-
 function formView() {
-  if (!form.room) return setupView();
   if (form.followsId) return followUpView();
   const sku = resolveSku();
   const sizes = form.name ? sizesFor(form.name) : [];
@@ -316,6 +307,14 @@ function incoming(r) {
   // From the second attempt on, the earlier items are still in the room: say what happens to them.
   const swap = r.round > 1 ? '<div class="small muted" style="margin-top:8px">Keep the earlier items in your room. Your runner will swap them when bringing the next ones.</div>' : '';
   if (r.status === 'requested') return `<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>${swap}`;
+  if (r.status === 'accepted' && r.noMatch) {
+    // The team looked and nothing in stock is close enough: say so plainly, instead of an endless spinner.
+    const alteration = r.suggestion?.kind === 'alteration_or_crossstore';
+    return `<div class="incoming done"><strong>No match in the store right now</strong>
+      <div class="small" style="margin-top:4px">${alteration
+        ? "We can't bring a better size, but your runner can talk you through an alteration or getting it from another store."
+        : "We don't have a better match in stock at the moment. Your runner will go through other options with you."}</div></div>`;
+  }
   if (r.status === 'accepted' || !r.onTheWay) return `<div class="incoming wait"><span class="spin"></span>Checking stock…</div>${swap}`;
 
   const trip = r.onTheWay.items.map((i) => ({ sku: getSku(i.itemId), id: i.itemId })).filter((x) => x.sku);
@@ -326,7 +325,7 @@ function incoming(r) {
       <div class="small muted">${esc(itemName(id))}</div>${why ? `<div class="small">Chosen for ${esc(why)}</div>` : ''}</div>`;
   };
   return `<div class="incoming bring">
-    <div class="small muted" style="letter-spacing:.6px;font-weight:700">${r.deliveredTs != null ? (many ? `${trip.length} ITEMS DELIVERED` : 'DELIVERED') : (many ? `BRINGING ${trip.length} ITEMS` : 'BRINGING')} TO ROOM ${esc(r.room)}</div>
+    <div class="small muted" style="letter-spacing:.6px;font-weight:700">${r.deliveredTs != null ? (many ? `${trip.length} ITEMS DELIVERED` : 'DELIVERED') : (many ? `BRINGING ${trip.length} ITEMS` : 'BRINGING')} TO YOUR ROOM</div>
     ${many ? '<div class="small muted" style="margin:2px 0 6px">Try them all; keep the one that fits.</div>' : ''}
     ${trip.map(item).join('')}
     ${r.deliveredTs != null ? tryOnBlock(r, many)
@@ -356,7 +355,7 @@ function tryOnBlock(r, many) {
 function others(r, list) {
   const rest = list.filter((x) => x.id !== r.id);
   if (!rest.length) return '';
-  return `<h2>Also open in Room ${esc(r.room)}</h2>${rest.map((x) => `
+  return `<h2>Also open</h2>${rest.map((x) => `
     <a class="card tap compact" href="#customer/${esc(x.id)}">
       <div class="row"><strong>Request ${list.indexOf(x) + 1} of ${list.length}</strong><span class="pill ok">${esc(x.status === 'requested' ? 'Waiting' : x.status === 'accepted' ? 'Accepted' : 'On the way')}</span></div>
       <div class="small muted">${esc(x.cur.skuIds.map(itemName).join(' + '))} · ${esc(issuesText(x.cur))}${x.round > 1 ? ` · attempt ${x.round}` : ''}</div>
@@ -387,7 +386,7 @@ function tracker(id) {
     return `<div>Attempt ${p.n}: ${p.items.length ? esc(p.items.map((id) => broughtName(r, id)).join(' · ')) : 'nothing brought'}${reported.length ? ` — you said ${esc(reported.join(' + '))} ${reported.length > 1 ? 'were' : 'was'} still not right` : ''}</div>`;
   }).join('');
   return `
-    <div class="roombar"><span>📍 <strong>Room ${esc(r.room)}</strong></span><span>${open && list.length > 1 ? `<span class="muted small">Request ${idx + 1} of ${list.length}</span> ` : ''}<button class="link-btn" data-action="c-leave" data-room="${esc(r.room)}">I'm done with this room</button></span></div>
+    <div class="roombar"><span></span><span>${open && list.length > 1 ? `<span class="muted small">Request ${idx + 1} of ${list.length}</span> ` : ''}<button class="link-btn" data-action="c-leave" data-room="${esc(r.room)}">I'm done with this room</button></span></div>
     <div class="card order">
       ${stepper(r, customerSteps(r), cancelled)}
       <div class="item-pill"><strong>${esc(itemTxt)}</strong>

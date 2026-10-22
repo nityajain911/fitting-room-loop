@@ -113,14 +113,14 @@ test('state guards return 409/400/404', async (t) => {
 });
 
 test('stock-check requests go to the floor queue and floor can accept them', async (t) => {
-  const s = await boot({ catalogue: SMALL_CATALOGUE });
+  const s = await boot({ catalogue: NEAR_CATALOGUE });
   t.after(s.close);
   const { body: { requestId: r } } = await s.call('POST', '/api/requests', { room: 3, skuId: 'OX-L-SLIM', issue: 'check_stock', chips: [] });
   assert.equal((await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' })).status, 400);
   assert.equal((await s.call('POST', `/api/requests/${r}/accept`, { role: 'floor' })).status, 200);
   const sug = (await s.events()).find((e) => e.type === 'suggestion_shown').payload;
   assert.equal(sug.kind, 'stock_check');
-  assert.equal((await s.call('POST', `/api/requests/${r}/confirm`, { itemId: 'OX-XL-REG' })).status, 200);
+  assert.equal((await s.call('POST', `/api/requests/${r}/confirm`, { itemId: 'OX-L-SLIM-NVY' })).status, 200);
 });
 
 test('escalation sweep appends exactly one escalated event past the threshold', async (t) => {
@@ -220,12 +220,19 @@ test('a still-open request that passes the threshold shows up in openEscalations
 import { CATALOGUE } from '../shared/catalogue.js';
 import { SMALL_CATALOGUE } from './fixtures.js';
 
+// The small fixture catalogue plus a one-size-up Slim (a sensible second choice) and a Navy twin of the L Slim (for stock checks).
+// The fixture's own XL Regular is 14 cm wider in the waist than the L Slim: too far off to be offered, which is the point.
+const NEAR_CATALOGUE = [
+  ...SMALL_CATALOGUE,
+  { ...SMALL_CATALOGUE[0], id: 'OX-XL-SLIM', size: 'XL', m: { chest: 117, waist: 102, shoulder: 48.5, sleeve: 68, length: 79 }, stock: 1, rack: 'A6' },
+  { ...SMALL_CATALOGUE[0], id: 'OX-L-SLIM-NVY', colour: 'Navy', stock: 2, rack: 'A7' },
+];
 const oxReq = async (s, extra = {}) =>
   (await s.call('POST', '/api/requests', { room: 2, skuId: 'OX-L-SLIM', issue: 'too_tight', chips: ['waist'], ...extra })).body.requestId;
 const suggestionsOf = async (s, id) => (await s.events()).filter((e) => e.type === 'suggestion_shown' && e.requestId === id).map((e) => e.payload);
 
 test('"not on rack": logs the discrepancy, withdraws the item, shows the next best, and lowers stock for later requests', async (t) => {
-  const catalogue = SMALL_CATALOGUE.map((x) => (x.id === 'OX-M-REG' ? { ...x, stock: 1 } : x));
+  const catalogue = NEAR_CATALOGUE.map((x) => (x.id === 'OX-M-REG' ? { ...x, stock: 1 } : x));
   const s = await boot({ catalogue, config: makeConfig({ BRING_COUNT: '1' }) }); // one item per trip
   t.after(s.close);
   const r = await oxReq(s);
@@ -241,7 +248,7 @@ test('"not on rack": logs the discrepancy, withdraws the item, shows the next be
   assert.deepEqual([disc.requestId, disc.payload.skuId, disc.payload.rack], [r, 'OX-M-REG', 'A4']);
   const [first, second] = await suggestionsOf(s, r);
   assert.equal(first.itemId, 'OX-M-REG');
-  assert.equal(second.itemId, 'OX-XL-REG'); // next best
+  assert.equal(second.itemId, 'OX-XL-SLIM'); // next best
   assert.deepEqual(second.excluded, ['OX-M-REG']);
   const d = deriveAll(ev);
   assert.equal(d.byId[r].status, 'accepted');
@@ -251,7 +258,7 @@ test('"not on rack": logs the discrepancy, withdraws the item, shows the next be
   // the report lowers stock for everyone: OX-M-REG had 1, so the next customer is no longer sent to it
   const r2 = await oxReq(s, { room: 5 });
   await s.call('POST', `/api/requests/${r2}/accept`, { role: 'runner' });
-  assert.equal((await suggestionsOf(s, r2))[0].itemId, 'OX-XL-REG');
+  assert.equal((await suggestionsOf(s, r2))[0].itemId, 'OX-XL-SLIM');
 
   // the next best is missing too -> nothing left, falls to the cross-store message
   await s.call('POST', `/api/requests/${r}/confirm`, {});
@@ -266,7 +273,7 @@ test('"not on rack": logs the discrepancy, withdraws the item, shows the next be
 });
 
 test('customer "Not this one": flags the request, then the runner asks for the next best', async (t) => {
-  const s = await boot({ catalogue: SMALL_CATALOGUE, config: makeConfig({ BRING_COUNT: '1' }) }); // one item per trip
+  const s = await boot({ catalogue: NEAR_CATALOGUE, config: makeConfig({ BRING_COUNT: '1' }) }); // one item per trip
   t.after(s.close);
   const r = await oxReq(s);
   assert.equal((await s.call('POST', `/api/requests/${r}/decline-item`)).status, 409); // nothing on its way
@@ -286,7 +293,7 @@ test('customer "Not this one": flags the request, then the runner asks for the n
   const req = deriveAll(ev).byId[r];
   assert.equal(req.itemDeclined, null);
   assert.equal(req.status, 'accepted');
-  assert.equal(req.suggestion.itemId, 'OX-XL-REG');
+  assert.equal(req.suggestion.itemId, 'OX-XL-SLIM');
   assert.ok(!ev.some((e) => e.type === 'inventory_discrepancy'), 'a declined item is not a stock problem');
 });
 
@@ -1301,4 +1308,77 @@ test('attempts have their own clocks: it waits to be accepted again, and can esc
   assert.equal((await s.events()).filter((e) => e.type === 'escalated').length, 0);
   s.advance(2_000); s.sweep(); s.sweep();
   assert.deepEqual((await s.events()).filter((e) => e.type === 'escalated').map((e) => e.payload.stage), ['accept']);
+});
+
+// ---------- rejecting the suggestion: other options, or "nothing fits" ----------
+const suggestionNow = async (s, id) => (await s.events()).filter((e) => e.type === 'suggestion_shown' && e.requestId === id).pop().payload;
+const fitOf = (id) => { const x = CATALOGUE.find((c) => c.id === id); return `${x.line}|${x.size}|${x.cut}`; };
+
+test('"show other options": the suggestion is rejected as a whole, and a new one follows that leaves it out in every colour', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await oxReq(s, { room: 3 });
+  assert.equal((await s.call('POST', `/api/requests/${r}/more-options`, { role: 'runner' })).status, 409);      // nothing suggested yet
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  const first = await suggestionNow(s, r);
+  const shownIds = first.options.map((o) => o.itemId);
+  const out = await s.call('POST', `/api/requests/${r}/more-options`, { role: 'runner' });
+  assert.equal(out.status, 200);
+  const ev = await s.events();
+  const rej = ev.filter((e) => e.type === 'suggestion_rejected').pop();
+  assert.deepEqual([rej.payload.itemIds, rej.payload.reason], [shownIds, 'more_options']);
+  const second = await suggestionNow(s, r);
+  const rejectedFits = new Set(shownIds.map(fitOf));
+  for (const o of second.options) assert.ok(!rejectedFits.has(fitOf(o.itemId)), `${o.itemId} has the same size and cut as something rejected`);
+  assert.equal(deriveAll(ev).byId[r].suggestionState, 'shown');
+  assert.equal(computeMetrics(ev).inventoryDiscrepancies.total, 0);                                         // not a stock problem
+  assert.ok(!ev.some((e) => e.type === 'inventory_discrepancy'));
+});
+
+test('asking for other options until the engine has nothing left ends in "nothing fits"', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await oxReq(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  let rounds = 0;
+  while (deriveAll(await s.events()).byId[r].suggestionState === 'shown' && (await suggestionNow(s, r)).options?.length && rounds < 12) {
+    assert.equal((await s.call('POST', `/api/requests/${r}/more-options`, { role: 'runner' })).status, 200);
+    rounds += 1;
+  }
+  const q = deriveAll(await s.events()).byId[r];
+  assert.ok(rounds >= 1 && rounds < 12);
+  assert.deepEqual([q.noMatch, q.hadNoMatch], [true, true]);
+  assert.ok(!(await suggestionNow(s, r)).options?.length);
+  assert.match((await suggestionNow(s, r)).reason, /cross-store|close enough|No in-stock/i);
+  assert.equal((await s.call('POST', `/api/requests/${r}/more-options`, { role: 'runner' })).status, 409);   // nothing left to replace
+});
+
+test('"nothing fits": the associate can declare it; nothing can be confirmed or brought afterwards, and no alternative can be "bought"', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await oxReq(s, { room: 3 });
+  assert.equal((await s.call('POST', `/api/requests/${r}/no-match`, { role: 'runner' })).status, 409);       // not accepted
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  assert.equal((await s.call('POST', `/api/requests/${r}/no-match`, { role: 'runner' })).status, 200);
+  const ev = await s.events();
+  assert.deepEqual(ev.slice(-2).map((e) => e.type), ['suggestion_rejected', 'no_match']);
+  const q = deriveAll(ev).byId[r];
+  assert.deepEqual([q.noMatch, q.status], [true, 'accepted']);
+  assert.equal((await s.call('POST', `/api/requests/${r}/confirm`, {})).status, 409);
+  assert.equal((await s.call('POST', `/api/requests/${r}/no-match`, { role: 'runner' })).status, 409);       // already
+  assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'bought_alternative', role: 'runner' })).status, 409); // nothing was brought
+  assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'cross_store_order', role: 'runner' })).status, 200);
+  assert.equal(computeMetrics(await s.events()).noMatchRequests, 1);
+});
+
+test('after "nothing fits", the lost sale can be explained in one tap as "no suitable item in stock"', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await oxReq(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
+  await s.call('POST', `/api/requests/${r}/no-match`, { role: 'runner' });
+  await s.call('POST', `/api/requests/${r}/close`, { outcome: 'left', role: 'runner' });
+  const res = await s.call('POST', `/api/requests/${r}/reason`, { reason_tag: 'stock_unavailable', summary_en: 'No suitable item in stock', evidence_type: 'system-observed', confidence: 1, method: 'system_rule', edited: false });
+  assert.equal(res.status, 200);
+  assert.deepEqual(computeMetrics(await s.events()).reasons.byEvidence['system-observed'], [{ tag: 'stock_unavailable', count: 1 }]);
 });
