@@ -112,7 +112,7 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     delivered: requests.filter((r) => rounds.get(r.id).some((d) => d.deliveredTs != null)).length,
     deliveredBy: { runner: allRounds.filter((d) => d.deliveredBy === 'runner').length, floor: allRounds.filter((d) => d.deliveredBy === 'floor').length },
     // What customers said. Kept apart from what the staff recorded: a purchase after a try-on is not a customer tapping "fits".
-    tryOn: { fits: allRounds.filter((d) => d.tryOn?.result === 'fits').length, notRight: allRounds.filter((d) => d.tryOn?.result === 'not_right').length, done: allRounds.filter((d) => d.tryOn?.result === 'no_more').length },
+    tryOn: { fits: allRounds.filter((d) => d.tryOn?.result === 'fits').length, notRight: allRounds.filter((d) => d.tryOn?.result === 'not_right').length, done: allRounds.filter((d) => d.tryOn?.result === 'no_more').length, noneClose: allRounds.filter((d) => d.tryOn?.result === 'none_close').length },
     boughtAfterTryOn: closedReqs.filter((r) => r.deliveredTs != null && SAVE_OUTCOMES.includes(r.outcome)).length,
     laterAttempts: laterAttempts(allRounds),
     noMatchRequests: requests.filter((r) => r.hadNoMatch).length, // nothing in stock fitted (engine or associate)

@@ -395,7 +395,7 @@ test('delivery is accept to handed over; set-off and try-on times are separate; 
   assert.equal(m.medianDeliverMs, 55_000);                       // accept -> handed over: 40 s and 70 s
   assert.equal(m.medianDispatchMs, 10_000);                      // accept -> on the way: 10 s, 10 s, 3 s
   assert.equal(m.medianTryOnMs, 150_000);                        // delivered -> closed: 120 s and 180 s
-  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1, done: 0 });
+  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1, done: 0, noneClose: 0 });
   assert.equal(m.delivered, 2);
 });
 
@@ -485,7 +485,7 @@ test('the headline times come from the first attempt; later attempts are counted
   assert.deepEqual([m.total, m.closed, m.saves, m.saveRate], [1, 1, 1, 1]);   // one request, one outcome
   assert.deepEqual([m.retried, m.savedAfterRetry, m.rounds], [1, 1, 2]);
   assert.deepEqual(m.deliveredBy, { runner: 1, floor: 1 });
-  assert.deepEqual(m.tryOn, { fits: 0, notRight: 1, done: 0 });
+  assert.deepEqual(m.tryOn, { fits: 0, notRight: 1, done: 0, noneClose: 0 });
   assert.equal(m.medianTryOnMs, 50_000);         // last handed over 150 s -> closed 200 s
 });
 
@@ -521,8 +521,9 @@ test('try-on figures keep what customers said apart from what the staff recorded
   trip('b', null, 'bought_alternative');            // the staff recorded a purchase; the customer never tapped
   trip('c', 'no_more', 'left');
   trip('d', 'not_right', null);
+  trip('e', 'none_close', null);
   const m = computeMetrics(events);
-  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1, done: 1 });               // customer statements only
+  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1, done: 1, noneClose: 1 });               // customer statements only
   assert.equal(m.boughtAfterTryOn, 2);                                        // a and b: closed as a purchase after a hand-over
 });
 

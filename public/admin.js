@@ -96,7 +96,7 @@ export function render() {
       <div class="row"><span>Handed to the customer by the runner / the floor associate</span><strong>${m.deliveredBy.runner} / ${m.deliveredBy.floor}</strong></div>
       <div class="row"><span>Median to set off (accept → on the way)</span><strong>${fmtDur(m.medianDispatchMs)}</strong></div>
       <div class="row"><span>Median try-on (handed over → closed)</span><strong>${fmtDur(m.medianTryOnMs)}</strong></div>
-      <div class="row"><span>Customers said: fits / still not right / all set</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight} / ${m.tryOn.done}</strong></div>
+      <div class="row"><span>Customers said: fits / still not right / all set / none close</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight} / ${m.tryOn.done} / ${m.tryOn.noneClose}</strong></div>
       <div class="row"><span>Closed as a purchase after a try-on (recorded by staff)</span><strong>${m.boughtAfterTryOn}</strong></div>
       <div class="row"><span>Second attempts and later: median to accept / to hand over (n)</span><strong>${fmtDur(m.laterAttempts.medianAcceptMs)} / ${fmtDur(m.laterAttempts.medianDeliverMs)} (${m.laterAttempts.n})</strong></div>
       <div class="row"><span>Requests that needed another attempt / of those, saved</span><strong>${m.retried} / ${m.savedAfterRetry}</strong></div>

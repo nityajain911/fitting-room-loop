@@ -970,6 +970,25 @@ test('try-on feedback: only after delivery, once, from the customer; it is a sta
 });
 
 
+test('"none came close": a customer statement after hand-over, once; only the runner can open the next attempt after it', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const r = await onTheWayReq(s);
+  await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
+  assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result: 'none_close' })).status, 200);
+  assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result: 'none_close' })).status, 409);   // once
+  const r2 = await onTheWayReq(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r2}/deliver`, { role: 'runner' });
+  await s.call('POST', `/api/requests/${r2}/try-on`, { result: 'not_right' });
+  assert.equal((await s.call('POST', `/api/requests/${r2}/try-on`, { result: 'none_close' })).status, 200);   // "still not right", then "none came close"
+  assert.equal((await s.call('POST', `/api/requests/${r2}/try-on`, { result: 'fits' })).status, 409);
+  const item = (await s.events()).filter((e) => e.type === 'on_the_way').pop().payload.items[0].itemId;
+  assert.equal((await s.call('POST', `/api/requests/${r}/rounds`, { item, issues: ['too_tight'] })).status, 409); // the customer is done: the runner takes over
+  const d = deriveAll(await s.events()).byId[r];
+  assert.deepEqual([d.tryOn.result, d.status], ['none_close', 'on_the_way']);
+  assert.equal(computeMetrics(await s.events()).tryOn.noneClose, 2);   // both requests ended on it (the second refined "still not right")
+});
+
 // ---------- restock tasks from the Manager ----------
 const missingOnRackApi = async (s, room = 2, runner = null) => {
   const r = await oxReq(s, { room });

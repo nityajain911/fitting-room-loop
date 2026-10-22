@@ -54,7 +54,8 @@ handlers['c-dept'] = (el) => {
 handlers['c-colour'] = (el) => { form.colour = el.dataset.v; hooks.render(); };
 handlers['c-style'] = (el) => {
   form.styleName = el.dataset.v;
-  if (!coloursFor(form.name, form.styleName).includes(form.colour)) form.colour = coloursFor(form.name, form.styleName)[0];
+  const colours = coloursFor(form.name, form.styleName);
+  if (!colours.includes(form.colour)) form.colour = colours.length === 1 ? colours[0] : null;
   hooks.render();
 };
 handlers['c-style-axis'] = (el) => {
@@ -64,8 +65,11 @@ handlers['c-style-axis'] = (el) => {
 };
 handlers['c-garment'] = (el) => {
   form.name = el.dataset.v;
-  form.styleName = stylesFor(form.name, CATALOGUE, form.dept)[0]; // the first style and its first colour are pre-selected; the customer can change them
-  form.colour = coloursFor(form.name, form.styleName)[0];
+  // Nothing is assumed: style and colour are chosen by the customer, unless the garment only comes one way.
+  const styles = stylesFor(form.name, CATALOGUE, form.dept);
+  form.styleName = styles.length === 1 ? styles[0] : null;
+  const colours = form.styleName ? coloursFor(form.name, form.styleName) : [];
+  form.colour = colours.length === 1 ? colours[0] : null;
   form.styleAxes = new Set([...form.styleAxes].filter((a) => styleAxesForForm().includes(a)));
   const sizes = sizesFor(form.name);
   form.size = sizes.length === 1 ? sizes[0] : null;
@@ -118,6 +122,12 @@ handlers['c-tryon'] = async (el) => {
   const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: el.dataset.result })); // fits / not_right / no_more
   if (out && el.dataset.result === 'not_right') location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`;
 };
+handlers['c-none-close'] = async (el) => {
+  const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: 'none_close' }));
+  if (out) location.hash = `#customer/${el.dataset.v}`; // back to the tracker: the runner is coming
+};
+const tried = new Set(); // requests whose items she says she has tried on: the fit question waits for that
+handlers['c-tried'] = (el) => { tried.add(el.dataset.v); hooks.render(); };
 handlers['c-another'] = (el) => { location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`; };
 handlers['c-decline'] = (el) => act(() => api('POST', `/api/requests/${el.dataset.v}/decline-item`));
 handlers['c-cancel'] = async (el) => {
@@ -198,11 +208,8 @@ export function render({ args, query }) {
 
 const roomOpen = (room) => S.derived.requests.filter((r) => r.room === room && isOpen(r)).sort((a, b) => a.createdTs - b.createdTs);
 
-/** The room, locked into the header once chosen. */
-function roomBar() {
-  return `<div class="roombar"><span></span>
-    <span><button class="link-btn" data-action="c-leave" data-room="${esc(form.room)}">I'm done with this room</button></span></div>`;
-}
+/** Ending the visit is a rare, quiet action: a small link at the foot of the screen, not a bar at the top. */
+const leaveLink = (room) => `<div class="secondary"><button class="link-btn muted-btn" data-action="c-leave" data-room="${esc(room)}">I'm done with this room</button></div>`;
 
 /**
  * Where on the garment. Only once a garment is chosen (the areas depend on it). With two issues, each gets its own
@@ -242,6 +249,7 @@ function followUpView() {
 
     <h2>${items.length > 1 ? 'Which item came closest to fitting?' : 'The item we brought'}</h2>
     <div class="opts">${items.map((id) => opt('c-pick', id, broughtName(original, id), chosen === id)).join('')}</div>
+    ${items.length > 1 ? `<button class="link-btn muted-btn" data-action="c-none-close" data-v="${esc(original.id)}">None came close</button>` : ''}
 
     ${chosen ? `<h2 style="margin-top:14px">What was still off with the ${esc(broughtName(original, chosen))}?</h2>
     ${issueSection(STYLE_AXES[kind] || [])}
@@ -261,22 +269,21 @@ function formView() {
   const sku = resolveSku();
   const sizes = form.name ? sizesFor(form.name) : [];
   const cuts = form.name && form.size ? cutsFor(form.name, form.size) : [];
-  const next = !form.room ? 'room' : !form.name ? 'garment' : !form.size ? 'size' : !form.cut ? 'cut' : !form.issues.length ? 'issue' : null;
+  const styles = form.name ? stylesFor(form.name, CATALOGUE, form.dept) : [];
+  const next = !form.room ? 'room' : !form.name ? 'garment' : !form.styleName ? 'style' : !form.colour ? 'colour' : !form.size ? 'size' : !form.cut ? 'cut' : !form.issues.length ? 'issue' : null;
   const ready = !next && !form.busy;
   const open = form.room ? roomOpen(form.room) : [];
   return `
     <div class="row"><h1>What's not working?</h1><span class="badge-anon">🔒 Anonymous</span></div>
     ${open.length ? `<a class="back-link" href="#customer/${esc(open[open.length - 1].id)}">✕ Cancel — back to your request${open.length > 1 ? 's' : ''}</a>` : ''}
 
-    ${roomBar()}
-
     <div class="seg" role="tablist" aria-label="Section">${DEPTS.map(([k, l]) => `<button type="button" class="${form.dept === k ? 'on' : ''}" data-action="c-dept" data-v="${k}">${l}</button>`).join('')}</div>
 
     <h2>Garment</h2>
     <div class="opts">${garments(CATALOGUE, form.dept).map((g) => opt('c-garment', g, g, form.name === g)).join('')}</div>
-    ${form.name && stylesFor(form.name, CATALOGUE, form.dept).length > 1 ? `<h2>Style</h2><div class="opts">${stylesFor(form.name, CATALOGUE, form.dept).map((st) => opt('c-style', st, st, form.styleName === st)).join('')}</div>` : ''}
-    ${form.name ? `<h2>Colour</h2><div class="opts">${coloursFor(form.name, form.styleName).map((c) => opt('c-colour', c, c, form.colour === c)).join('')}</div>` : ''}
-    ${form.name ? `<h2>Size</h2><div class="opts">${sizes.map((s) => opt('c-size', s, s, form.size === s)).join('')}</div>` : ''}
+    ${styles.length > 1 ? `<h2>Style</h2><div class="opts">${styles.map((st) => opt('c-style', st, st, form.styleName === st)).join('')}</div>` : ''}
+    ${form.name && form.styleName && coloursFor(form.name, form.styleName).length > 1 ? `<h2>Colour</h2><div class="opts">${coloursFor(form.name, form.styleName).map((c) => opt('c-colour', c, c, form.colour === c)).join('')}</div>` : ''}
+    ${form.colour ? `<h2>Size</h2><div class="opts">${sizes.map((s) => opt('c-size', s, s, form.size === s)).join('')}</div>` : ''}
     ${form.size ? `<h2>Cut</h2><div class="opts">${cuts.map((c) => opt('c-cut', c, c, form.cut === c)).join('')}</div>` : ''}
 
     ${issueSection(styleAxesForForm())}
@@ -285,6 +292,7 @@ function formView() {
     <h2>Add a note <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
     <textarea id="c-text" data-keep="c-text" maxlength="500" placeholder="English, हिन्दी or Hinglish — e.g. “kamar pe tight hai”"></textarea>
 
+    ${leaveLink(form.room)}
     <div class="cta-wrap">
       <button class="btn primary block" data-action="c-submit" ${ready ? '' : 'disabled'}>${form.busy ? 'Sending…'
         : ready ? `Send request: ${esc(prefix(sku))}${esc(sku.colour)} ${esc(sku.name)} ${esc(sku.size)} ${esc(sku.cut)}` : `Select ${next} to continue`}</button>
@@ -325,14 +333,18 @@ function incoming(r) {
 
   const trip = r.onTheWay.items.map((i) => ({ sku: getSku(i.itemId), id: i.itemId })).filter((x) => x.sku);
   const many = trip.length > 1;
-  const item = ({ sku, id }) => {
-    const why = r.suggestion ? choiceSummary(optionFor(r.suggestion, id)) : null;
+  // "Chosen for a roomier chest" on every item tells her nothing: say it once, or per item only when they differ.
+  const whys = trip.map(({ id }) => (r.suggestion ? choiceSummary(optionFor(r.suggestion, id)) : null));
+  const same = whys.every((w) => w === whys[0]);
+  const item = ({ sku, id }, i) => {
+    const base = getSku(r.baseOf?.[id]) || getSku(r.skuId);
+    const differs = base && (sku.styleName !== base.styleName || sku.colour !== base.colour); // the header already names the garment
     return `<div class="bitem"><strong>${esc(broughtName(r, id))}</strong>
-      <div class="small muted">${esc(itemName(id))}</div>${why ? `<div class="small">Chosen for ${esc(why)}</div>` : ''}</div>`;
+      ${differs ? `<div class="small muted">${esc(itemName(id))}</div>` : ''}${whys[i] && !(many && same) ? `<div class="small">Chosen for ${esc(whys[i])}</div>` : ''}</div>`;
   };
   return `<div class="incoming bring">
     <div class="small muted" style="letter-spacing:.6px;font-weight:700">${r.deliveredTs != null ? (many ? `${trip.length} ITEMS DELIVERED` : 'DELIVERED') : (many ? `BRINGING ${trip.length} ITEMS` : 'BRINGING')} TO YOUR ROOM</div>
-    ${many ? '<div class="small muted" style="margin:2px 0 6px">Try them all; keep the one that fits.</div>' : ''}
+    ${many ? `<div class="small muted" style="margin:2px 0 6px">Try them all; keep the one that fits.${same && whys[0] ? ` All chosen for ${esc(whys[0])}.` : ''}</div>` : ''}
     ${trip.map(item).join('')}
     ${r.deliveredTs != null ? tryOnBlock(r, many)
       : r.itemDeclined
@@ -343,18 +355,21 @@ function incoming(r) {
 
 /** After the item has been handed over: how does it fit? A statement from the customer, never an outcome. */
 function tryOnBlock(r, many) {
-  if (r.tryOn?.result === 'fits') return '<div class="small" style="margin-top:10px">Glad it fits! The team will wrap up with you.</div>';
-  if (r.tryOn?.result === 'no_more') return '<div class="small" style="margin-top:10px">Thanks! No more sizes coming. The team will wrap up with you.</div>';
+  if (r.tryOn?.result === 'fits') return `<div class="small" style="margin-top:10px">Glad it fits! ${many ? "Tell your runner which one you're keeping." : "Let your runner know you're ready."}</div>`;
+  if (r.tryOn?.result === 'no_more') return '<div class="small" style="margin-top:10px">Thanks! Let your runner know what you decide.</div>';
+  if (r.tryOn?.result === 'none_close') return '<div class="small" style="margin-top:10px">Sorry about that. Your runner will come and help.</div>';
   if (r.tryOn?.result === 'not_right') {
     return `<div class="small" style="margin-top:10px">Thanks, let's find another.</div>
       <button class="btn primary block" style="margin-top:8px" data-action="c-another" data-v="${esc(r.id)}">Tell us what's still not right</button>`;
   }
-  return `<div style="margin-top:10px"><strong>How does ${many ? 'the one you kept' : 'the new one'} fit?</strong></div>
+  // Asked only once she says she has tried it on, not the moment it arrives.
+  if (!tried.has(r.id)) return `<button class="btn primary block" style="margin-top:10px" data-action="c-tried" data-v="${esc(r.id)}">I've tried ${many ? 'them' : 'it'} on</button>`;
+  return `<div style="margin-top:10px"><strong>How ${many ? 'do they' : 'does it'} fit?</strong></div>
     <div class="btn-grid" style="margin-top:8px">
       <button class="btn primary" data-action="c-tryon" data-result="fits" data-v="${esc(r.id)}">👍 Fits great</button>
       <button class="btn" data-action="c-tryon" data-result="not_right" data-v="${esc(r.id)}">🔄 Still not right</button>
     </div>
-    <button class="link-btn muted-btn" style="margin-top:6px" data-action="c-tryon" data-result="no_more" data-v="${esc(r.id)}">👋 I'm all set — no more sizes needed</button>`;
+    <button class="link-btn muted-btn" style="margin-top:6px" data-action="c-tryon" data-result="no_more" data-v="${esc(r.id)}">👋 I'm all set</button>`;
 }
 
 /** Other open requests from this room as compact cards, read from the shared log (a room number is not personal data). */
@@ -392,7 +407,7 @@ function tracker(id) {
     return `<div>Attempt ${p.n}: ${p.items.length ? esc(p.items.map((id) => broughtName(r, id)).join(' · ')) : 'nothing brought'}${reported.length ? ` — you said ${esc(reported.join(' + '))} ${reported.length > 1 ? 'were' : 'was'} still not right` : ''}</div>`;
   }).join('');
   return `
-    <div class="roombar"><span></span><span>${open && list.length > 1 ? `<span class="muted small">Request ${idx + 1} of ${list.length}</span> ` : ''}<button class="link-btn" data-action="c-leave" data-room="${esc(r.room)}">I'm done with this room</button></span></div>
+    ${open && list.length > 1 ? `<div class="muted small">Request ${idx + 1} of ${list.length}</div>` : ''}
     <div class="card order">
       ${stepper(r, customerSteps(r), cancelled)}
       <div class="item-pill"><strong>${esc(itemTxt)}</strong>
@@ -404,5 +419,6 @@ function tracker(id) {
       <button class="btn block" data-action="c-new" data-room="${esc(r.room)}">${open ? '+ Request another item' : 'New request'}</button>
       ${open ? `<button class="link-btn muted-btn" data-action="c-cancel" data-v="${esc(r.id)}">Cancel request</button>` : ''}
     </div>
-    ${others(r, list)}`;
+    ${others(r, list)}
+    ${leaveLink(r.room)}`;
 }

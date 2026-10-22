@@ -21,6 +21,7 @@ const picks = {};  // requestId -> { sig, ids: Set } the items ticked for the tr
 let lastRole = 'runner';
 const moreOpen = {}; // requestId -> the bar's secondary actions are showing
 const closing = {};  // requestId -> the bar is showing the outcome buttons
+const picked = {};   // requestId -> Set of item ids ticked off while walking the racks
 
 /** Who is acting, for the server: the team member this phone joined as (none when there is no roster). */
 const withStaff = (body) => (pairedId() ? { ...body, staffId: pairedId() } : body);
@@ -32,6 +33,11 @@ const rerender = () => hooks.render();
 handlers['a-more-toggle'] = (el) => { moreOpen[el.dataset.v] = !moreOpen[el.dataset.v]; rerender(); };
 handlers['a-close-open'] = (el) => { closing[el.dataset.v] = true; moreOpen[el.dataset.v] = false; rerender(); };
 handlers['a-close-cancel'] = (el) => { delete closing[el.dataset.v]; rerender(); };
+handlers['a-pick'] = (el) => {
+  const set = (picked[el.dataset.id] ||= new Set());
+  if (set.has(el.dataset.v)) set.delete(el.dataset.v); else set.add(el.dataset.v);
+  rerender();
+};
 handlers['a-open'] = (el) => go(`#associate/${lastRole}/${el.dataset.v}`);
 handlers['a-back'] = () => go(`#associate/${lastRole}`);
 handlers['a-accept'] = (el) => post(`/api/requests/${el.dataset.v}/accept`, withStaff({ role: el.dataset.role }));
@@ -221,7 +227,7 @@ const statusPill = (x) => {
 };
 
 /** What the attempt in progress is about: the items the customer named, and what is wrong with them. */
-const issuesNow = (x) => issuesText(x.cur ?? x);
+const issuesNow = (x) => ((x.cur ?? x).issues || []).includes('check_stock') ? 'Check stock' : issuesText(x.cur ?? x); // a task for the floor, not the customer's own phrase
 const itemNow = (x) => (x.cur?.skuIds ?? [x.skuId]).map(itemName).join(' + ');
 const curSku = (x) => getSku((x.cur?.skuIds ?? [x.skuId])[0]);
 const attemptPill = (x) => (x.round > 1 ? `<span class="pill accent">Attempt ${x.round}</span>` : '');
@@ -294,10 +300,11 @@ const escBanner = (x) => (x.escalated ? `<div class="small muted">${esc(stageTex
 function queueCard(x) {
   const cls = x.escalated ? 'esc' : '';
   if (x.kind === 'task') {
+    const racks = [...new Set((x.items || []).map((i) => i.rack))].sort();
     return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
-      <div class="row"><strong>${esc(taskTitle(x))}</strong>${timerHtml(x, 'plain')}</div>
+      <div class="row"><strong>${x.taskType === 'restock' ? esc(taskTitle(x)) : `Pull → Room ${esc(x.room)}`}</strong>${timerHtml(x, 'plain')}</div>
       <div class="small muted">${(x.items || []).length > 1 ? `${x.items.length} items` : esc(itemName(x.itemId))}</div>
-      <div class="pills">${x.taskType === 'restock' ? '<span class="pill accent">From the manager</span>' : ''}${(x.items || []).map((i) => rackPill(i.rack)).join('')}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
+      <div class="pills">${x.taskType === 'restock' ? '<span class="pill accent">From the manager</span>' : ''}${racks.map((k) => rackPill(k)).join('')}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
   }
   const target = x.suggestion?.itemId ? getSku(x.suggestion.itemId) : null;
   return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
@@ -322,7 +329,7 @@ const RESTOCK_DONE = { recount: 'Recounted — record corrected', replenish: 'Re
 const bar = (id, primary, more = []) => `<div class="actionbar">
   ${more.length && moreOpen[id] ? `<div class="bar-more">${more.join('')}</div>` : ''}
   <div class="bar-row">${primary}${more.length ? `<button class="btn bar-dots" data-action="a-more-toggle" data-v="${esc(id)}" aria-label="More actions" aria-expanded="${!!moreOpen[id]}">⋯</button>` : ''}</div></div>`;
-const barBtn = (action, id, label, extra = '') => `<button class="btn primary xl" data-action="${action}" data-v="${esc(id)}" ${extra}>${label}</button>`;
+const barBtn = (action, id, label, extra = '', cls = 'primary') => `<button class="btn ${cls} xl" data-action="${action}" data-v="${esc(id)}" ${extra}>${label}</button>`;
 const moreBtn = (action, id, label, extra = '') => `<button class="btn block ${extra.includes('danger') ? 'danger' : ''}" data-action="${action}" data-v="${esc(id)}" ${extra.replace('danger', '')}>${label}</button>`;
 
 function taskBar(t, doneLabel) {
@@ -346,8 +353,8 @@ function taskDetail(t) {
   return `
     <div class="head">${ringHtml(t, 56)}<div><h1>Floor stock pull</h1>${timerHtml(t, 'plain')}</div></div>
     <div class="card stack">
-      ${(t.items || []).map((i) => `<div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(i.itemId))}</strong>${rackPill(i.rack)}</div></div></div>`).join('')}
-      <div>To Room ${esc(t.room)}</div>
+      ${[...(t.items || [])].sort((a, b) => String(a.rack).localeCompare(String(b.rack))).map((i) => `<div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(i.itemId))}</strong>${rackPill(i.rack)}</div></div></div>`).join('')}
+      <div>Take to Room ${esc(t.room)}</div>
       ${t.escalated ? `<span class="esc-tag">ESCALATED</span> <span class="small muted">${esc(stageText(t))}</span>` : ''}${statusPill(t)}
       ${t.status === 'cancelled' ? `<div class="banner info">${esc(CANCEL_REASON[t.cancelReason] || 'Cancelled.')}</div>` : ''}
     </div>${taskBar(t, 'Handed over')}`;
@@ -384,7 +391,9 @@ function requestBar(r, role) {
   }
   if (r.status === 'on_the_way' && r.deliveredTs == null) return bar(r.id, barBtn('a-deliver', r.id, 'Handed to customer'), [...pullBtn, left]);
   const door = r.status === 'on_the_way' && r.onTheWay?.items?.length ? [moreBtn('a-door-open', r.id, '🔄 Another size')] : [];
-  return bar(r.id, barBtn('a-close-open', r.id, 'Close…'), [...door, left]);
+  // Right after the hand-over the customer is still trying things on: closing is quiet until they have answered.
+  const waiting = r.status === 'on_the_way' && !r.tryOn;
+  return bar(r.id, barBtn('a-close-open', r.id, 'Close…', '', waiting ? '' : 'primary'), [...door, left]);
 }
 
 function requestDetail(r, role) {
@@ -582,11 +591,13 @@ function suggestionBlock(r, sku, role, compact = false) {
 
   // Step 2: the trip is on its way. One summary; the table stays one tap away.
   if (compact) {
-    const trip = (r.onTheWay?.items || []).map((i) => getSku(i.itemId)).filter(Boolean);
+    // In walking order (by rack), each ticked off as it is picked.
+    const trip = (r.onTheWay?.items || []).map((i) => getSku(i.itemId)).filter(Boolean).sort((a, b) => String(a.rack).localeCompare(String(b.rack)));
+    const got = picked[r.id] || new Set();
     const key = `sugg:${r.id}`;
     return `<h2>${r.deliveredTs != null ? 'Brought' : 'On the way'}</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}
-      ${trip.map((o) => `<div class="optrow"><div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong></span>${rackPill(o.rack)}</div>
+      ${trip.map((o) => `<div class="optrow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong></span>${rackPill(o.rack)}</div>
 </div>
         <button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button></div>`).join('')}
       ${struckHtml}
@@ -611,6 +622,7 @@ function tripEnd(r) {
   const say = !r.tryOn ? `${by}<div class="small muted">Trying it on…</div>`
     : r.tryOn.result === 'no_more' ? `${by}<div class="banner info">Customer: all set 👋</div>`
     : r.tryOn.result === 'fits' ? `${by}<div class="banner good">Customer: it fits 👍</div>`
+    : r.tryOn.result === 'none_close' ? `${by}<div class="banner alert">Customer: none came close. Go and talk it through.</div>`
       : `${by}<div class="banner info">Customer: still not right 🔄 A follow-up is coming.</div>`;
   return `${say}${doorBlock(r)}`;
 }

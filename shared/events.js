@@ -68,8 +68,9 @@ export const RESTOCK_KINDS = { recount: 'Recount the rack', replenish: 'Restock 
 export const RESTOCK_SIGNAL = { recount: 'inventory', replenish: 'high_demand' };
 export const OUTCOME_LABELS = { ...OUTCOMES };
 // What the customer says after trying the items on: "fits" (keeping one), "not_right" (another attempt), "no_more" (all set,
-// no more sizes needed). Statements only: the staff still record the real outcome.
-export const TRYON_RESULTS = ['fits', 'not_right', 'no_more'];
+// no more sizes needed), "none_close" (nothing came close: the runner talks it through). Statements only: the staff still
+// record the real outcome.
+export const TRYON_RESULTS = ['fits', 'not_right', 'no_more', 'none_close'];
 export const SAVE_OUTCOMES = ['bought_original', 'bought_alternative', 'cross_store_order'];
 
 export const ROLES = { runner: 'Fitting-room runner', floor: 'Floor associate' };

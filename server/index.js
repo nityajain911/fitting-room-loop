@@ -299,7 +299,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     if (!r || r.kind !== 'request') throw missing('Request not found');
     if (r.status !== 'on_the_way' || r.deliveredTs == null) throw conflict('Items can be reported once they have been handed over');
     const staffRole = req.body?.role in ROLES ? req.body.role : null; // set by the associate screens, never by the customer's
-    if (!staffRole && ['fits', 'no_more'].includes(r.tryOn?.result)) throw conflict('You already told us you are all set');
+    if (!staffRole && ['fits', 'no_more', 'none_close'].includes(r.tryOn?.result)) throw conflict('You already told us');
     const item = req.body?.item;
     if (typeof item !== 'string' || !(r.onTheWay?.items || []).some((i) => i.itemId === item)) throw bad('Pick the item that came closest, from the ones we brought');
     const fields = readRequestFields(req.body);
@@ -574,9 +574,10 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   app.post('/api/requests/:id/try-on', (req, res) => {
     const r = getRequest(req.params.id);
     const result = req.body?.result;
-    if (!TRYON_RESULTS.includes(result)) throw bad('result must be fits or not_right');
+    if (!TRYON_RESULTS.includes(result)) throw bad('Unknown try-on answer');
     if (r.status !== 'on_the_way' || r.deliveredTs == null) throw conflict('The item has not been handed over yet');
-    if (r.tryOn) throw conflict('You already told us');
+    // "Still not right" is sent the moment it is tapped; "none came close" on the next screen may refine it.
+    if (r.tryOn && !(result === 'none_close' && r.tryOn.result === 'not_right')) throw conflict('You already told us');
     append(r.id, 'tryon_feedback', 'customer', { result });
     res.json({ ok: true });
   });

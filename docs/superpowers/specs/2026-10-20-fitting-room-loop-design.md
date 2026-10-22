@@ -381,3 +381,14 @@ Rule for every change here: a screen ends up with fewer words than before, not m
 - **Offline.** A thin "Offline, reconnecting…" bar replaces the small pill, and buttons are greyed out until the connection is back.
 - **Customer reassurance.** "We've got it" with "Usually under a minute / about N min" from `typicalAcceptMs` (median first accept, shown only from 3 requests); once escalated: "Sorry for the wait. A manager's been told."
 - **Cut.** Removed: the queue caption, the long step explanations on the runner screen, the repeated item line under each item, the "Full details" duplicate of the escalated layout.
+
+## 38. Addendum (2026-10-22): the "Next" improvements, with fewer words
+- **No silent defaults.** Choosing a garment no longer pre-selects its first style and colour. Style and colour are chosen by the customer (auto-selected only when there is a single option), Size and Cut appear once the colour is known, and the button says what is missing ("Select colour to continue"), so the wrong item cannot be recorded by accident.
+- **"I'm done with this room"** moves from a bar at the top to a small link at the foot of the form and of the tracker. The "Request N of M" count stays above the card.
+- **The fit question waits.** After the hand-over the customer sees one button, "I've tried them on"; only then "How does it fit?" (fits, still not right, I'm all set). The state is held on the tablet; a reload shows the button again.
+- **Next steps.** After "fits": "Tell your runner which one you're keeping" (several items) or "Let your runner know you're ready". After "all set": "Let your runner know what you decide."
+- **"None came close".** `TRYON_RESULTS` gains `none_close`. On the "which one came closest?" screen (several items) a link says it; it may refine an earlier "still not right" (so the server accepts `none_close` after `not_right`, nothing else changes an answer). The customer cannot open another attempt after it; the runner sees a red "none came close, go and talk it through" and uses the door form or an outcome. `metrics.tryOn.noneClose` counts it; Admin shows it.
+- **Say it once.** "Chosen for a roomier waist" is shown once when every item has the same reason, per item only when they differ; the item's long name is shown only when its style or colour differs from what she had on.
+- **Runner pick list.** After "Bring", items are listed in rack order with a tick box each (dimmed when ticked). The ticks live on the phone and never block the hand-over. Right after the hand-over, "Close…" is a quiet button until the customer has answered, so a hurried runner does not close a request that is still being tried on.
+- **Floor cards.** A stock check is titled "Check stock" (not the customer's phrase). A pull is "Pull → Room N", with the number of items and each rack once, in rack order; its detail lists items in rack order under "Take to Room N".
+
