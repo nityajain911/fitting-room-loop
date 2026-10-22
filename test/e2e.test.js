@@ -969,8 +969,10 @@ test('"try another": a follow-up request in the same room continues the first, w
   await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
   await s.call('POST', `/api/requests/${r}/try-on`, { result: 'not_right' });
   // validation: wrong room, unknown request, or something not yet delivered
-  const body = { skuId: 'OX-L-REG', issue: 'too_loose', chips: [], followsId: r };
+  const trip = deriveAll(await s.events()).byId[r].onTheWay.items.map((i) => i.itemId);
+  const body = { skuId: trip[0], issue: 'too_loose', chips: [], followsId: r };
   assert.equal((await s.call('POST', '/api/requests', { ...body, room: 4 })).status, 400);
+  assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3, skuId: 'OX-XXL-REG-NOPE' })).status, 400); // not something that was delivered
   assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3, followsId: 'nope' })).status, 400);
   const made = await s.call('POST', '/api/requests', { ...body, room: 3 });
   assert.equal(made.status, 200);
@@ -979,7 +981,7 @@ test('"try another": a follow-up request in the same room continues the first, w
   assert.deepEqual([d.byId[r].status, d.byId[r].outcome], ['closed', 'continued']);
   const m = computeMetrics(await s.events());
   assert.deepEqual([m.closed, m.continued, m.followUps], [0, 1, 1]);
-  assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3 })).status, 400); // already continued
+  assert.equal((await s.call('POST', '/api/requests', { ...body, room: 3 })).status, 400); // that item already has its follow-up
 });
 
 // ---------- restock tasks from the Manager ----------
@@ -1150,4 +1152,61 @@ test('a pull the floor already finished is left alone when the runner then hands
   await s.call('POST', `/api/tasks/${taskId}/done`, { role: 'floor' });
   assert.equal(deriveAll(await s.events()).byId[taskId].status, 'done');
   assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 409);
+});
+
+// ---------- reporting some of the delivered items again ----------
+const deliveredTrip = async (s, extra = {}) => {
+  const r = await onTheWayReq(s, extra);
+  await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
+  const trip = deriveAll(await s.events()).byId[r].onTheWay.items.map((i) => i.itemId);
+  return { r, trip };
+};
+
+test('the customer picks which delivered items to report again: one follow-up request per item, the first request continued once', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, trip } = await deliveredTrip(s, { room: 3 });
+  assert.ok(trip.length >= 3);
+  const out = await s.call('POST', `/api/requests/${r}/follow-ups`, { items: [trip[0], trip[2]], issues: ['too_loose'], chips: ['chest'] });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.requestIds.length, 2);
+  const d = deriveAll(await s.events());
+  const made = out.body.requestIds.map((id) => d.byId[id]);
+  assert.deepEqual(made.map((x) => x.skuId), [trip[0], trip[2]]);                    // each starts from its own item
+  assert.ok(made.every((x) => x.followsId === r && x.room === 3 && x.issue === 'too_loose'));
+  assert.deepEqual([d.byId[r].status, d.byId[r].outcome], ['closed', 'continued']);   // closed once
+  assert.equal((await s.events()).filter((e) => e.type === 'closed' && e.requestId === r).length, 1);
+  assert.deepEqual(d.byId[r].followUps, out.body.requestIds);
+  const m = computeMetrics(await s.events());
+  assert.deepEqual([m.continued, m.followUps], [1, 2]);
+});
+
+test('the items not picked can be reported later, once each, with a different issue', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, trip } = await deliveredTrip(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r}/follow-ups`, { items: [trip[0]], issues: ['too_loose'], chips: [] });
+  const second = await s.call('POST', `/api/requests/${r}/follow-ups`, { items: [trip[1]], issues: ['too_long'], chips: ['sleeves'] });
+  assert.equal(second.status, 200);                                                   // the first request is already continued: still allowed
+  const d = deriveAll(await s.events());
+  assert.equal(d.byId[second.body.requestIds[0]].issue, 'too_long');
+  assert.equal((await s.events()).filter((e) => e.type === 'closed' && e.requestId === r).length, 1);
+  assert.equal((await s.call('POST', `/api/requests/${r}/follow-ups`, { items: [trip[0]], issues: ['too_tight'], chips: [] })).status, 400); // already reported
+});
+
+test('follow-ups are validated: only delivered items, none twice, a sensible issue, and only for a delivered request', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, trip } = await deliveredTrip(s, { room: 3 });
+  const post = (b) => s.call('POST', `/api/requests/${r}/follow-ups`, b);
+  assert.equal((await post({ items: [], issues: ['too_loose'] })).status, 400);                         // nothing picked
+  assert.equal((await post({ items: ['OX-XXL-REG-NOPE'], issues: ['too_loose'] })).status, 400);        // not delivered
+  assert.equal((await post({ items: [trip[0], trip[0]], issues: ['too_loose'] })).status, 400);         // twice
+  assert.equal((await post({ items: [trip[0]], issues: ['too_tight', 'too_loose'] })).status, 400);     // contradictory issues
+  assert.equal((await post({ items: [trip[0]] })).status, 400);                                         // no issue at all
+  assert.equal((await post({ items: Array(6).fill(trip[0]) , issues: ['too_loose'] })).status, 400);    // too many
+  assert.equal(deriveAll(await s.events()).byId[r].status, 'on_the_way');                               // nothing was created by the refusals
+  const undelivered = await onTheWayReq(s, { room: 4 });                                                 // on its way, not handed over yet
+  assert.equal((await s.call('POST', `/api/requests/${undelivered}/follow-ups`, { items: [trip[0]], issues: ['too_loose'] })).status, 400);
+  assert.equal((await s.call('POST', '/api/requests/nope/follow-ups', { items: [trip[0]], issues: ['too_loose'] })).status, 404);
 });

@@ -14,7 +14,7 @@ import { tripItemName } from '/shared/visuals.js';
 const ROOMS = [1, 2, 3, 4, 5, 6, 7, 8];
 let roomLocked = false;  // the room came from the URL (one QR code per fitting-room door)
 let pickingRoom = false; // the customer tapped "Change"
-const blank = () => ({ dept: 'Men', name: null, styleName: null, colour: null, size: null, cut: null, followsId: null, issues: [], chips: new Set(), styleAxes: new Set(), busy: false });
+const blank = () => ({ dept: 'Men', name: null, styleName: null, colour: null, size: null, cut: null, followsId: null, followItems: new Set(), issues: [], chips: new Set(), styleAxes: new Set(), busy: false });
 const form = { room: null, ...blank() };
 /** Start a fresh request: everything is cleared except the room, which stays locked. */
 const resetForm = () => Object.assign(form, blank());
@@ -130,7 +130,12 @@ handlers['c-cancel'] = async (el) => {
   if (!confirm('Cancel this request? The team will be told you no longer need help.')) return;
   await act(() => api('POST', `/api/requests/${el.dataset.v}/cancel`));
 };
+handlers['c-pick'] = (el) => {
+  if (form.followItems.has(el.dataset.v)) form.followItems.delete(el.dataset.v); else form.followItems.add(el.dataset.v);
+  hooks.render();
+};
 handlers['c-submit'] = async () => {
+  if (form.followsId) return submitFollowUps();
   const sku = resolveSku();
   if (form.busy || !form.room || !sku || !form.issues.length) return;
   const text = (document.getElementById('c-text')?.value || '').trim();
@@ -151,12 +156,37 @@ handlers['c-submit'] = async () => {
   }
 };
 
-/** "Still not right, try another": the form starts from the item that was handed over (the first of the trip). */
+/** The delivered items of a request that have not been reported again yet. */
+const remainingItems = (r) => (r?.onTheWay?.items || []).map((i) => i.itemId)
+  .filter((id) => getSku(id) && !S.derived.requests.some((x) => x.followsId === r.id && x.skuId === id));
+
+/** "Still not right": a form to pick which of the delivered items to report (one or several), and what is wrong. */
 function startFollowUp(id) {
   const r = S.derived.byId[id];
-  const sku = r?.onTheWay?.items?.length ? getSku(r.onTheWay.items[0].itemId) : null;
-  if (!sku || !isOpen(r)) return;
-  Object.assign(form, { ...blank(), room: r.room, dept: sku.department ?? 'Men', name: sku.name, styleName: sku.styleName ?? null, colour: sku.colour, size: sku.size, cut: sku.cut, followsId: id });
+  const left = remainingItems(r);
+  if (!r || r.deliveredTs == null || !left.length || !(isOpen(r) || r.outcome === 'continued')) return;
+  Object.assign(form, { ...blank(), room: r.room, followsId: id, followItems: new Set(left.length === 1 ? left : []) }); // one item left: nothing to choose
+}
+
+async function submitFollowUps() {
+  const items = [...form.followItems];
+  if (form.busy || !items.length || !form.issues.length) return;
+  const text = (document.getElementById('c-text')?.value || '').trim();
+  form.busy = true;
+  hooks.render();
+  const out = await act(() => api('POST', `/api/requests/${form.followsId}/follow-ups`, {
+    items, issues: [...form.issues], chips: [...form.chips], styleAxes: form.issues.includes('another_style') ? [...form.styleAxes] : [], text,
+  }));
+  form.busy = false;
+  if (out?.requestIds?.length) {
+    const room = form.room;
+    resetForm(); form.room = room;
+    const t = document.getElementById('c-text'); if (t) t.value = '';
+    location.hash = `#customer/${out.requestIds[0]}`;
+  } else {
+    toast('Could not send the request — please try again');
+    hooks.render();
+  }
 }
 
 export function render({ args, query }) {
@@ -165,6 +195,7 @@ export function render({ args, query }) {
   if (roomLocked) form.room = n;
   const from = query?.get('from');
   if (from && form.followsId !== from && !args[0]) startFollowUp(from);
+  if (!from && form.followsId) Object.assign(form, { followsId: null, followItems: new Set() }); // left the follow-up: back to the normal form
   return args[0] ? tracker(args[0]) : formView();
 }
 
@@ -180,11 +211,10 @@ function roomBar() {
  * Where on the garment. Only once a garment is chosen (the areas depend on it). With two issues, each gets its own
  * list, so it is clear which area belongs to which issue: how roomy it is (waist, chest...) or how long it is.
  */
-function whereView() {
+function whereView(chips = chipsForForm(), garmentChosen = !!form.name) {
   const fit = form.issues.filter((k) => FIT_ISSUES.includes(k));
-  if (!form.name || !fit.length) return '';
+  if (!garmentChosen || !fit.length) return '';
   const optional = '<span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span>';
-  const chips = chipsForForm();
   const group = (list) => `<div class="opts">${list.map((c) => opt('c-chip', c, cap(c), form.chips.has(c))).join('')}</div>`;
   if (fit.length < 2) return `<h2>Where? ${optional}</h2>${group(chips)}`;
   return fit.map((k) => {
@@ -193,7 +223,47 @@ function whereView() {
   }).join('');
 }
 
+/** What is the issue (and, for "another style", which details), shared by the normal form and the follow-up. */
+function issueSection(axes) {
+  return `<h2>What's the issue? ${form.issues.some((k) => FIT_ISSUES.includes(k)) ? '<span class="muted" style="text-transform:none;letter-spacing:0">(pick more than one if both apply)</span>' : ''}</h2>
+    <div class="issue-grid">${Object.entries(ISSUES).map(([k, v]) => opt('c-issue', k, v, form.issues.includes(k), k === 'check_stock' ? 'wide' : '')).join('')}</div>
+    ${form.issues.includes('another_style') ? `<h2>What would you like different? <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
+    <div class="opts">${axes.map((a) => opt('c-style-axis', a, STYLE_AXIS_LABELS[a], form.styleAxes.has(a))).join('')}</div>` : ''}`;
+}
+
+/** "Still not right": pick the delivered items to report again, say what is wrong, and one request goes out per item. */
+function followUpView() {
+  const original = S.derived.byId[form.followsId];
+  const items = remainingItems(original);
+  if (!original || !items.length) return '<div class="card"><h3>Nothing left to report</h3><button class="btn primary" data-action="c-new">New request</button></div>';
+  const base = getSku(original.skuId);
+  const kind = styleKind(getSku(items[0]).category);
+  const picked = items.filter((id) => form.followItems.has(id));
+  const ready = picked.length > 0 && form.issues.length > 0 && !form.busy;
+  return `
+    <div class="row"><h1>Which ones aren't right?</h1><span class="badge-anon">🔒 Anonymous</span></div>
+    <a class="back-link" href="#customer/${esc(original.id)}">✕ Cancel — back to your request</a>
+    <div class="roombar"><span>📍 <strong>Room ${esc(original.room)}</strong></span></div>
+
+    <h2>${items.length > 1 ? 'Tap each one that is still not right' : 'The one that is still not right'}</h2>
+    <div class="opts">${items.map((id) => opt('c-pick', id, base ? tripItemName(base, getSku(id)) : itemName(id), form.followItems.has(id))).join('')}</div>
+    <div class="small muted">${items.length > 1 ? 'The ones you leave out, we leave as they are. ' : ''}You can report the rest later, with a different issue.</div>
+
+    ${issueSection(STYLE_AXES[kind] || [])}
+    ${whereView(CHIPS_BY_KIND[kind === 'trousers' ? 'trousers' : 'top'], true)}
+
+    <h2>Add a note <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
+    <textarea id="c-text" data-keep="c-text" maxlength="500" placeholder="English, हिन्दी or Hinglish — e.g. “kamar pe tight hai”"></textarea>
+
+    <div class="cta-wrap">
+      <button class="btn primary block" data-action="c-submit" ${ready ? '' : 'disabled'}>${form.busy ? 'Sending…'
+        : !picked.length ? 'Select the items to continue' : !form.issues.length ? 'Select the issue to continue'
+          : `Report ${picked.length === 1 ? 'this item' : `these ${picked.length} items`}`}</button>
+    </div>`;
+}
+
 function formView() {
+  if (form.followsId) return followUpView();
   const sku = resolveSku();
   const sizes = form.name ? sizesFor(form.name) : [];
   const cuts = form.name && form.size ? cutsFor(form.name, form.size) : [];
@@ -202,7 +272,6 @@ function formView() {
   const open = form.room ? roomOpen(form.room) : [];
   return `
     <div class="row"><h1>What's not working?</h1><span class="badge-anon">🔒 Anonymous</span></div>
-    ${form.followsId && S.derived.byId[form.followsId] ? `<div class="banner info">Following up on the item we brought: <strong>${esc(itemName(S.derived.byId[form.followsId].onTheWay?.items?.[0]?.itemId))}</strong>. Change the size or cut if you tried another, then tell us what is still not right. <a href="#customer/${esc(form.followsId)}">Cancel</a></div>` : ''}
     ${open.length ? `<a class="back-link" href="#customer/${esc(open[open.length - 1].id)}">✕ Cancel — back to your request${open.length > 1 ? 's' : ''}</a>` : ''}
 
     ${form.room && !pickingRoom ? roomBar() : `<h2>Fitting room</h2><div class="opts">${ROOMS.map((r) => opt('c-room', r, `Room ${r}`, form.room === r)).join('')}</div>`}
@@ -216,11 +285,7 @@ function formView() {
     ${form.name ? `<h2>Size</h2><div class="opts">${sizes.map((s) => opt('c-size', s, s, form.size === s)).join('')}</div>` : ''}
     ${form.size ? `<h2>Cut</h2><div class="opts">${cuts.map((c) => opt('c-cut', c, c, form.cut === c)).join('')}</div>` : ''}
 
-    <h2>What's the issue? ${form.issues.some((k) => FIT_ISSUES.includes(k)) ? '<span class="muted" style="text-transform:none;letter-spacing:0">(pick more than one if both apply)</span>' : ''}</h2>
-    <div class="issue-grid">${Object.entries(ISSUES).map(([k, v]) => opt('c-issue', k, v, form.issues.includes(k), k === 'check_stock' ? 'wide' : '')).join('')}</div>
-
-    ${form.issues.includes('another_style') ? `<h2>What would you like different? <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
-    <div class="opts">${styleAxesForForm().map((a) => opt('c-style-axis', a, STYLE_AXIS_LABELS[a], form.styleAxes.has(a))).join('')}</div>` : ''}
+    ${issueSection(styleAxesForForm())}
     ${whereView()}
 
     <h2>Add a note <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
@@ -246,8 +311,11 @@ function stepper(r, steps, cancelled) {
 function incoming(r) {
   if (r.status === 'cancelled') return `<div class="banner alert">You cancelled this request ${esc(STAGE_TEXT[r.cancelStage] || '')}. Nothing more is needed.</div>`;
   if (r.status === 'closed' && r.outcome === 'continued') {
-    const next = S.derived.requests.find((x) => x.followsId === r.id);
-    return `<div class="incoming done">We're on it with your new request.${next ? ` <a href="#customer/${esc(next.id)}">See it</a>` : ''}</div>`;
+    const next = S.derived.requests.filter((x) => x.followsId === r.id);
+    const base = getSku(r.skuId);
+    const links = next.map((x) => `<a href="#customer/${esc(x.id)}">${esc(base && getSku(x.skuId) ? tripItemName(base, getSku(x.skuId)) : 'See it')}</a>`).join(' · ');
+    return `<div class="incoming done">We're on it with your new request${next.length > 1 ? 's' : ''}. ${links}</div>
+      ${remainingItems(r).length ? `<button class="btn block" style="margin-top:8px" data-action="c-another" data-v="${esc(r.id)}">Report another item from this delivery</button>` : ''}`;
   }
   if (r.status === 'closed') return '<div class="incoming done">All done. Thanks for letting us help.</div>';
   if (r.status === 'requested') return '<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>';

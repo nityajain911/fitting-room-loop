@@ -248,40 +248,81 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   });
 
   // ---- customer ----
-  app.post('/api/requests', async (req, res) => {
-    const { room, skuId, chips = [], styleAxes = [], text = '', followsId = null } = req.body || {};
-    const picked = req.body?.issues ?? (req.body?.issue ? [req.body.issue] : []); // one issue (older clients) or a list
-    const roomNum = Number(room);
-    if (!Number.isInteger(roomNum) || roomNum < 1 || roomNum > 99) throw bad('room must be a number 1-99');
-    const sku = getSku(skuId, catalogue);
-    if (!sku) throw bad('Unknown garment');
+  /** The fields every new request needs, checked once: one issue or a list, body areas, style details, a short note. */
+  const readRequestFields = (body) => {
+    const { chips = [], styleAxes = [], text = '' } = body || {};
+    const picked = body?.issues ?? (body?.issue ? [body.issue] : []); // one issue (older clients) or a list
     const issues = (() => { try { return normaliseIssues(picked); } catch (e) { throw bad(e.message); } })();
-    const issue = issues[0]; // the main one: routing and labels use it
     if (!Array.isArray(chips) || chips.some((c) => !CHIPS.includes(c))) throw bad('Unknown body-area chip');
     if (!Array.isArray(styleAxes) || styleAxes.some((a) => !ALL_STYLE_AXES.includes(a))) throw bad('Unknown style detail');
     if (typeof text !== 'string' || text.length > 500) throw bad('text must be a string of at most 500 characters');
+    return { issues, chips, styleAxes, text };
+  };
 
-    // "Still not right, try another": a follow-up to a request whose item was handed over, in the same room.
-    let followed = null;
-    if (followsId != null) {
-      followed = derived().byId[followsId];
-      if (!followed || followed.kind !== 'request' || followed.room !== roomNum || followed.deliveredTs == null || followed.status !== 'on_the_way') throw bad('That request cannot be continued');
-    }
-
-    // The raw text is parsed and dropped; only the structured result is logged.
-    const parsed = await parseCustomerText(text, llmFor(req));
+  /** Append `created` and `routed` for one request. The first issue is the main one: routing and labels use it. */
+  const createRequest = ({ roomNum, skuId, issues, chips, styleAxes, parsed, followsId = null }) => {
     const id = rid('r');
+    const issue = issues[0];
     append(id, 'created', 'customer', {
       room: roomNum, skuId, issue, issues, chips: [...new Set(chips)], parsed: parsed.fields, method: parsed.method,
       styleAxes: issue === 'another_style' ? [...new Set(styleAxes)] : [], // style details only mean something for "Another style"
-      ...(followed ? { followsId } : {}),
+      ...(followsId ? { followsId } : {}),
     });
     const route = routeFor(issue);
     append(id, 'routed', 'system', { role: route.role, rule: route.rule });
-    // The first request is carried on by this one: it is closed as "continued", so the result is counted once.
-    if (followed) append(followed.id, 'closed', 'system', { outcome: CONTINUED, followedBy: id });
+    return id;
+  };
+
+  /**
+   * "Still not right": the delivered items a customer can report again. The request must have been handed over and be
+   * either still on its way (the try-on) or already continued by an earlier report. Each delivered item can be reported once.
+   */
+  const followableItems = (original) => {
+    if (!original || original.kind !== 'request' || original.deliveredTs == null) return null;
+    if (!(original.status === 'on_the_way' || (original.status === 'closed' && original.outcome === CONTINUED))) return null;
+    const taken = new Set(derived().requests.filter((x) => x.followsId === original.id).map((x) => x.skuId));
+    return (original.onTheWay?.items || []).map((i) => i.itemId).filter((id) => !taken.has(id));
+  };
+
+  app.post('/api/requests', async (req, res) => {
+    const roomNum = Number(req.body?.room);
+    const { skuId, followsId = null } = req.body || {};
+    if (!Number.isInteger(roomNum) || roomNum < 1 || roomNum > 99) throw bad('room must be a number 1-99');
+    if (!getSku(skuId, catalogue)) throw bad('Unknown garment');
+    const fields = readRequestFields(req.body);
+
+    // A follow-up to a request whose items were handed over, in the same room, about one of those items.
+    let followed = null;
+    if (followsId != null) {
+      followed = derived().byId[followsId];
+      if (!followed || followed.room !== roomNum || !followableItems(followed)?.includes(skuId)) throw bad('That request cannot be continued');
+    }
+
+    // The raw text is parsed and dropped; only the structured result is logged.
+    const parsed = await parseCustomerText(fields.text, llmFor(req));
+    const id = createRequest({ roomNum, skuId, ...fields, parsed, followsId });
+    // The earlier request is carried on by this one: it is closed as "continued", so the result is counted once.
+    if (followed && followed.status === 'on_the_way') append(followed.id, 'closed', 'system', { outcome: CONTINUED, followedBy: id });
     assignPending();
     res.json({ requestId: id, method: parsed.method });
+  });
+
+  // The customer picks which of the delivered items are still not right (one or several) and says what is wrong: one
+  // follow-up request per item, each starting from that item, so each gets its own suggestion. The note is read once.
+  app.post('/api/requests/:id/follow-ups', async (req, res) => {
+    const original = derived().byId[req.params.id];
+    if (!original || original.kind !== 'request') throw missing('Request not found');
+    const items = req.body?.items;
+    if (!Array.isArray(items) || !items.length || items.length > 5 || new Set(items).size !== items.length) throw bad('Pick between 1 and 5 different items');
+    const open = followableItems(original);
+    if (!open) throw bad('That request cannot be continued');
+    if (items.some((id) => !open.includes(id))) throw bad('Those items cannot be reported (not delivered, or already reported)');
+    const fields = readRequestFields(req.body);
+    const parsed = await parseCustomerText(fields.text, llmFor(req));
+    const ids = items.map((skuId) => createRequest({ roomNum: original.room, skuId, ...fields, parsed, followsId: original.id }));
+    if (original.status === 'on_the_way') append(original.id, 'closed', 'system', { outcome: CONTINUED, followedBy: ids[0] });
+    assignPending();
+    res.json({ requestIds: ids, method: parsed.method });
   });
 
   // "I'm done with this room": ends the visit. Anything still open from the room is withdrawn, so nobody carries items to

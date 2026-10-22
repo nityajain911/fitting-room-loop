@@ -620,3 +620,14 @@ test('who handed the items over is remembered, and a pull cancelled because of i
   assert.equal(d.byId.r1.deliveredBy, 'floor');
   assert.deepEqual([d.byId.t1.status, d.byId.t1.cancelReason], ['cancelled', 'handed_over']);
 });
+
+test('a request knows which follow-ups continued it', () => {
+  const { events, add } = makeLog();
+  onWay(add);
+  add(30_000, 'r1', 'delivered', {}, 'runner');
+  add(40_000, 'a', 'created', { room: 1, skuId: 'OX-M-REG', issue: 'too_loose', chips: [], parsed: null, method: 'none', followsId: 'r1' }, 'customer');
+  add(41_000, 'b', 'created', { room: 1, skuId: 'OX-XL-REG', issue: 'too_long', chips: [], parsed: null, method: 'none', followsId: 'r1' }, 'customer');
+  const d = deriveAll(events);
+  assert.deepEqual(d.byId.r1.followUps, ['a', 'b']);
+  assert.deepEqual(d.byId.a.followUps, []);
+});

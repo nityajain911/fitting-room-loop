@@ -241,7 +241,7 @@ function queueCard(x) {
   return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
     <div class="row"><strong>${esc(issuesText(x))}</strong>${timerHtml(x, 'plain')}</div>
     <div class="small muted">${esc(itemName(x.skuId))}</div>
-    <div class="pills">${roomBadge(x)}${carryover(x) ? '<span class="pill accent">💡 Fit carryover</span>' : ''}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
+    <div class="pills">${roomBadge(x)}${x.followsId ? '<span class="pill">Follow-up</span>' : ''}${carryover(x) ? '<span class="pill accent">💡 Fit carryover</span>' : ''}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
 }
 
 // ---------- floor task ----------
@@ -340,6 +340,7 @@ function normalDetail(r, role, withHead) {
     ${withHead ? `<div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}</div></div>
     <div class="subhead"><span>${esc(itemName(r.skuId))}</span>${statusPill(r)}</div>` : ''}
     ${withHead ? escBanner(r) : ''}
+    ${r.followsId && withHead ? '<div class="banner info"><strong>Follow-up.</strong> The customer was brought this item and said it is still not right. Start from it, not from the garment they first asked about.</div>' : ''}
     ${(() => { const c = carryover(r); return c ? `<div class="banner info">💡 <strong>Fit carryover.</strong> ${esc(c.text)} <span class="small muted">A hint from this room visit, not a profile.</span></div>` : ''; })()}
     ${r.itemDeclined ? `<div class="banner alert"><strong>Customer says: not this one.</strong> Don't bring ${esc(itemName(r.itemDeclined.itemId))}. Show the next best below.</div>` : ''}
     ${r.status === 'cancelled' ? `<div class="banner alert"><strong>Cancelled by the customer</strong> ${esc(STAGE_TEXT[r.cancelStage] || '')}. No further action is needed.</div>` : ''}

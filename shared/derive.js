@@ -27,13 +27,14 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
           escalated: false, escalatedTs: null, escalatedStage: null, escalations: [], assistLog: [], assistedNow: false,
           suggestion: null, suggestionState: null, confirmedItemId: null, confirmedItemIds: [],
-          onTheWay: null, onTheWayTs: null, deliveredTs: null, deliveredBy: null, tryOn: null, followsId: p.followsId ?? null, reasons: [], floorTaskIds: [],
+          onTheWay: null, onTheWayTs: null, deliveredTs: null, deliveredBy: null, tryOn: null, followsId: p.followsId ?? null, followUps: [], reasons: [], floorTaskIds: [],
           discrepancies: [], declinedIds: [], itemDeclined: null, assistedBy: null, assistedTs: null,
         };
         const sku = getSku(p.skuId, catalogue);
         r.skill = sku ? skillOf(sku) : null; // which kind of specialist the garment calls for
         byId[r.id] = r;
         requests.push(r);
+        if (p.followsId && byId[p.followsId]?.kind === 'request') byId[p.followsId].followUps.push(r.id); // carried on from an earlier request
         break;
       }
       case 'routed': {
