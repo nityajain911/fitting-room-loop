@@ -58,6 +58,8 @@ The AI can only fill the structured fields (area, issue, summary, evidence type,
 
 **Lock a device to one role.** Add `mode=` to a link once and the device remembers it: `/#customer?room=3&mode=customer` (a room tablet: no tabs, no Admin link, screen kept awake), `/#associate?mode=staff` (a runner or floor phone: only the queue, beeps and buzzes for new work and escalations, 🔔 turns the sound off), `/#manager?mode=manager`. `/#customer?mode=demo` unlocks it again. The Admin page lists every link.
 
+**Prices.** Each recommended article shows its sample price (₹) for the runner and on the customer's tracker. Price is shown, not used: matching and routing ignore it.
+
 **Manager and Admin.** The Manager page opens with the floor right now (waiting, longest wait, every fitting room, who holds what), then the figures for the range you pick (Last hour, Today, 7 days, All), in two columns on a desk. Signals are grouped by kind. Admin has tabs (Team, Timing, Devices, Data, Demo); Timing shows what happens to an unanswered request in plain words.
 
 If the phones can't reach the laptop, the Wi-Fi probably isolates devices (common on guest and office networks). Turn on your phone's hotspot and connect the laptop and the other phones to it, or use the public deploy below.

@@ -400,3 +400,8 @@ Rule for every change here: a screen ends up with fewer words than before, not m
 - **Admin in tabs.** Team, Timing, Devices, Data, and Demo (only with demo controls). One section at a time; the last tab is remembered. "Clear demo data" sits in Data.
 - **Timing in plain words.** `shared/timing.js`: a strip shows what happens and when ("At once: main person is asked, 20 seconds: backup, 40 seconds: everyone, 2 minutes: manager alerted"), and each number shows what it comes to ("= 2 minutes"); both update as you type. The long help paragraph is gone; the input limits do that job.
 
+## 40. Addendum (2026-10-23): article prices
+- **Show the price, nothing more.** Every article carries a sample `price` in rupees (per style: the same in every colour, size and cut), shown as "₹4,999" (Indian digit grouping, `priceLabel`) next to each article the team recommends: on the runner's "Bring" rows (before and after confirming), in the column headers of the Measurements table (what the customer has on, and each item), and on the customer's tracker beside each item being brought. No price difference, no "pricier" flag, no warning.
+- **The engine is unchanged.** Price is not an input to matching or ranking, and routing still never uses spend. Prices are not in the event log: screens read them from the catalogue, like measurements and racks.
+- **Labelled.** The sample label now reads "Illustrative sample data and prices — not Tommy Hilfiger specifications".
+

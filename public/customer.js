@@ -5,7 +5,7 @@
 //   tracker  (#customer/<id>) — one active order card. The form is not rendered, so nothing can be edited by accident.
 import { S, hooks, handlers, api, act, esc, toast, issuesText, itemName, STAGE_TEXT } from './core.js';
 import { toggleIssue } from '/shared/events.js';
-import { CATALOGUE, garments, getSku, stylesFor } from '/shared/catalogue.js';
+import { CATALOGUE, garments, getSku, stylesFor, priceLabel } from '/shared/catalogue.js';
 import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
@@ -339,7 +339,7 @@ function incoming(r) {
   const item = ({ sku, id }, i) => {
     const base = getSku(r.baseOf?.[id]) || getSku(r.skuId);
     const differs = base && (sku.styleName !== base.styleName || sku.colour !== base.colour); // the header already names the garment
-    return `<div class="bitem"><strong>${esc(broughtName(r, id))}</strong>
+    return `<div class="bitem"><div class="bline"><strong>${esc(broughtName(r, id))}</strong><span class="price">${esc(priceLabel(sku))}</span></div>
       ${differs ? `<div class="small muted">${esc(itemName(id))}</div>` : ''}${whys[i] && !(many && same) ? `<div class="small">Chosen for ${esc(whys[i])}</div>` : ''}</div>`;
   };
   return `<div class="incoming bring">

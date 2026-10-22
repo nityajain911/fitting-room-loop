@@ -1,4 +1,4 @@
-// Illustrative sample data — not Tommy Hilfiger specifications. Measurements in cm.
+// Illustrative sample data and prices — not Tommy Hilfiger specifications. Measurements in cm, prices in rupees.
 //
 // The catalogue is generated from product lines (style variants) and a few explicit size grids, so every number is
 // consistent:
@@ -8,7 +8,16 @@
 //   - colour variants of one style share measurements (only stock differs)
 //   - every line + colour has the full size x cut grid, so any combination a customer picks exists
 // Stock for the original demo lines is explicit; newer lines use a fixed, deterministic pattern with realistic gaps.
-export const CATALOGUE_LABEL = 'Illustrative sample data — not Tommy Hilfiger specifications';
+export const CATALOGUE_LABEL = 'Illustrative sample data and prices — not Tommy Hilfiger specifications';
+
+// Sample price per style, in rupees. A style costs the same in every colour, size and cut.
+const PRICES = {
+  OX: 4999, OS: 5499, OT: 5299, PL: 4499, PB: 4699, PC: 4799, PO: 3499, PS: 3699, PM: 3999, CH: 4299, CP: 4599, JN: 5999,
+  WX: 4799, WY: 5199, WP: 4299, WS: 4599, WL: 3299, WM: 3499, WN: 3799, WJ: 5799, WC: 4099, WQ: 4399,
+};
+
+/** "₹4,999" (Indian digit grouping), or nothing when an article has no price. */
+export const priceLabel = (sku) => (Number.isFinite(sku?.price) ? `₹${sku.price.toLocaleString('en-IN')}` : '');
 
 const r1 = (n) => Math.round(n * 10) / 10;
 
@@ -220,7 +229,7 @@ function build() {
           const band = Math.min(2, Math.floor((si * 3) / f.sizes.length));
           out.push({
             id, line: f.code, department: f.department || 'Men', name: f.name, category: f.category, fabric: f.fabric, styleName: f.styleName, attrs: { ...f.attrs },
-            size, cut, colour: col.name,
+            size, cut, colour: col.name, price: PRICES[f.code],
             m: { ...f.measures(size, si - baseIdx, cut), ...(f.overrides?.[id] || {}) },
             stock: col.stock ? col.stock[cut][si] : patternStock(f.code, ci, cutIdx, si),
             rack: RACK_OVERRIDES[id] || `${f.aisle}${f.rackBase + ci * 6 + cutIdx * 3 + band + 1}`,

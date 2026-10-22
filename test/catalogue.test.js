@@ -204,3 +204,29 @@ test('nothing is ever suggested across departments: not a fit, a size, a style o
     }
   }
 });
+
+// ---------- sample prices ----------
+import { CATALOGUE as CAT, priceLabel, CATALOGUE_LABEL as LABEL } from '../shared/catalogue.js';
+
+test('every article has a sample price, and one style costs the same in every colour, size and cut', () => {
+  assert.ok(CAT.every((s) => Number.isInteger(s.price) && s.price > 0));
+  const byStyle = new Map();
+  for (const s of CAT) {
+    const k = `${s.line}`;
+    if (!byStyle.has(k)) byStyle.set(k, new Set());
+    byStyle.get(k).add(s.price);
+  }
+  assert.ok([...byStyle.values()].every((set) => set.size === 1));
+  assert.ok(new Set(CAT.map((s) => s.price)).size > 3);   // not one price for everything
+});
+
+test('a price reads as rupees with Indian digit grouping, and nothing when there is none', () => {
+  assert.equal(priceLabel({ price: 4999 }), '₹4,999');
+  assert.equal(priceLabel({ price: 125000 }), '₹1,25,000');
+  assert.equal(priceLabel({}), '');
+  assert.equal(priceLabel(null), '');
+});
+
+test('the sample label says the prices are illustrative too', () => {
+  assert.match(LABEL, /sample data and prices/i);
+});
