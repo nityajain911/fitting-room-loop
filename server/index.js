@@ -462,8 +462,13 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   app.post('/api/tasks/:id/done', (req, res) => {
     const t = getTask(req.params.id);
     const role = taskRole(req, t);
+    if (t.status === 'cancelled') throw conflict(t.cancelReason === 'handed_over' ? 'The items were already handed to the customer' : 'This pull was cancelled');
     if (t.status !== 'accepted') throw conflict('Task must be accepted first');
     append(t.id, t.taskType === 'restock' ? 'restock_task_done' : 'floor_pull_done', role, {});
+    // Handing the pulled items over is handing them to the customer: the request is delivered, and the runner's own
+    // "Handed to customer" is no longer offered.
+    const parent = t.parentId ? derived().byId[t.parentId] : null;
+    if (parent && parent.status === 'on_the_way' && parent.deliveredTs == null) append(parent.id, 'delivered', role, {});
     res.json({ ok: true });
   });
 
@@ -487,6 +492,10 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     if (r.status !== 'on_the_way' || !r.onTheWay?.items?.length) throw conflict('Nothing is on its way to hand over');
     if (r.deliveredTs != null) throw conflict('Already handed over');
     append(r.id, 'delivered', actorOf(req, r), {});
+    // One hand-over, whoever does it: a floor pull still in progress has nothing left to hand over, so it is withdrawn.
+    for (const id of r.floorTaskIds) {
+      if (['requested', 'accepted'].includes(derived().byId[id]?.status)) append(id, 'floor_pull_cancelled', 'system', { byRole: 'system', reason: 'handed_over' });
+    }
     res.json({ ok: true });
   });
 

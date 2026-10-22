@@ -608,3 +608,15 @@ test('the kept item comes from the close, or is the only item of a single-item t
   const d = deriveAll(events);
   assert.deepEqual([d.byId.r1.keptItemId, d.byId.r2.keptItemId, d.byId.r3.keptItemId, d.byId.r4.keptItemId], ['OX-XL-REG', 'OX-M-REG', null, null]);
 });
+
+// ---------- one hand-over, whoever does it ----------
+test('who handed the items over is remembered, and a pull cancelled because of it says why', () => {
+  const { events, add } = makeLog();
+  onWay(add);
+  add(25_000, 'r1', 'floor_pull_requested', { taskId: 't1', itemId: 'OX-M-REG', rack: 'A4' }, 'runner');
+  add(30_000, 'r1', 'delivered', {}, 'floor');
+  add(30_001, 't1', 'floor_pull_cancelled', { byRole: 'system', reason: 'handed_over' }, 'system');
+  const d = deriveAll(events);
+  assert.equal(d.byId.r1.deliveredBy, 'floor');
+  assert.deepEqual([d.byId.t1.status, d.byId.t1.cancelReason], ['cancelled', 'handed_over']);
+});

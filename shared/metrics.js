@@ -106,6 +106,7 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     medianDispatchMs: median(requests.filter((r) => r.acceptedTs != null && r.onTheWayTs != null).map((r) => r.onTheWayTs - r.acceptedTs)),
     medianTryOnMs: median(closedReqs.filter((r) => r.deliveredTs != null).map((r) => r.closedTs - r.deliveredTs)),
     delivered: requests.filter((r) => r.deliveredTs != null).length,
+    deliveredBy: { runner: requests.filter((r) => r.deliveredBy === 'runner').length, floor: requests.filter((r) => r.deliveredBy === 'floor').length },
     tryOn: { fits: requests.filter((r) => r.tryOn?.result === 'fits').length, notRight: requests.filter((r) => r.tryOn?.result === 'not_right').length },
     continued: continuedReqs.length,
     followUps: requests.filter((r) => r.followsId).length,

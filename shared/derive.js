@@ -27,7 +27,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
           escalated: false, escalatedTs: null, escalatedStage: null, escalations: [], assistLog: [], assistedNow: false,
           suggestion: null, suggestionState: null, confirmedItemId: null, confirmedItemIds: [],
-          onTheWay: null, onTheWayTs: null, deliveredTs: null, tryOn: null, followsId: p.followsId ?? null, reasons: [], floorTaskIds: [],
+          onTheWay: null, onTheWayTs: null, deliveredTs: null, deliveredBy: null, tryOn: null, followsId: p.followsId ?? null, reasons: [], floorTaskIds: [],
           discrepancies: [], declinedIds: [], itemDeclined: null, assistedBy: null, assistedTs: null,
         };
         const sku = getSku(p.skuId, catalogue);
@@ -66,7 +66,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         r.suggestion = p;
         r.suggestionState = 'shown';
         if (r.itemDeclined) { // the customer declined the previous item: it is no longer on its way
-          r.itemDeclined = null; r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.confirmedItemId = null;
+          r.itemDeclined = null; r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.deliveredBy = null; r.confirmedItemId = null;
           if (r.status === 'on_the_way') r.status = 'accepted';
         }
         break;
@@ -93,7 +93,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
       }
       case 'delivered': {
         const r = get(e.requestId);
-        if (r && r.kind === 'request' && r.status === 'on_the_way') { r.deliveredTs = e.ts; clearEscalation(r); }
+        if (r && r.kind === 'request' && r.status === 'on_the_way') { r.deliveredTs = e.ts; r.deliveredBy = e.actor ?? null; clearEscalation(r); }
         break;
       }
       case 'tryon_feedback': {
@@ -148,7 +148,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
       }
       case 'floor_pull_cancelled': {
         const t = get(e.requestId);
-        if (t && t.kind === 'task' && t.status !== 'done' && t.status !== 'cancelled') { t.status = 'cancelled'; t.cancelledTs = e.ts; clearEscalation(t); }
+        if (t && t.kind === 'task' && t.status !== 'done' && t.status !== 'cancelled') { t.status = 'cancelled'; t.cancelledTs = e.ts; t.cancelReason = p.reason ?? null; clearEscalation(t); }
         break;
       }
       case 'escalated': {
@@ -182,7 +182,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           r.confirmedItemId = r.confirmedItemIds[0] ?? rest[0].itemId;
         } else {
           // nothing left to bring: withdraw until a new suggestion is shown
-          r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.confirmedItemId = null; r.confirmedItemIds = []; r.suggestionState = 'withdrawn';
+          r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.deliveredBy = null; r.confirmedItemId = null; r.confirmedItemIds = []; r.suggestionState = 'withdrawn';
           if (r.status === 'on_the_way') r.status = 'accepted';
         }
         break;

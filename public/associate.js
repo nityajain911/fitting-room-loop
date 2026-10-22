@@ -245,6 +245,10 @@ function queueCard(x) {
 }
 
 // ---------- floor task ----------
+const CANCEL_REASON = {
+  handed_over: 'The runner already handed the items to the customer.',
+  customer_declined: 'The customer declined these items.',
+};
 const taskTitle = (x) => (x.taskType === 'restock' ? RESTOCK_KINDS[x.restockKind] || 'Restock' : 'Floor stock pull');
 const RESTOCK_HELP = {
   recount: 'Count what is on the rack. If the stock record is wrong, correct it. The manager flagged it because customers found it missing.',
@@ -274,8 +278,9 @@ function taskDetail(t) {
       <div>Bring ${(t.items || []).length > 1 ? 'all' : 'it'} to Room ${esc(t.room)}</div>
       <div class="small muted">Linked to request ${esc(t.parentId)}</div>
       ${t.escalated ? `<span class="esc-tag">ESCALATED</span> <span class="small muted">${esc(stageText(t))}</span>` : ''}${statusPill(t)}
+      ${t.status === 'cancelled' ? `<div class="banner info">${esc(CANCEL_REASON[t.cancelReason] || 'This pull was cancelled.')} Nothing more to do.</div>` : ''}
       ${t.status === 'requested' ? `<button class="btn primary block" data-action="a-task-accept" data-v="${esc(t.id)}">Accept</button>` : ''}
-      ${t.status === 'accepted' ? `<button class="btn primary block" data-action="a-task-done" data-v="${esc(t.id)}">Mark pulled &amp; handed over</button>` : ''}
+      ${t.status === 'accepted' ? `<button class="btn primary block" data-action="a-task-done" data-v="${esc(t.id)}">Pulled &amp; handed to customer</button>` : ''}
     </div>`;
 }
 
@@ -541,13 +546,15 @@ function suggestionBlock(r, sku, role, compact = false) {
  */
 function tripEnd(r) {
   if (r.deliveredTs == null) {
+    const livePull = r.floorTaskIds.map((id) => S.derived.byId[id]).some((t) => t && ['requested', 'accepted'].includes(t.status));
     return `<button class="btn primary block xl" style="margin-top:12px" data-action="a-deliver" data-v="${esc(r.id)}">Handed to customer</button>
-      <div class="small muted" style="margin-top:6px">Stops the delivery timer. The customer tries it on and tells us how it fits.</div>
+      <div class="small muted" style="margin-top:6px">Stops the delivery timer. The customer tries it on and tells us how it fits.${livePull ? ' A floor pull is in progress: whoever hands the items over first completes it for both of you.' : ''}</div>
       <div style="text-align:right"><button class="back" data-action="a-left-early" data-v="${esc(r.id)}">Customer left early</button></div>`;
   }
-  const say = !r.tryOn ? '<div class="small muted">Customer is trying it on…</div>'
-    : r.tryOn.result === 'fits' ? '<div class="banner good"><strong>Customer says it fits 👍</strong> Close it when they decide.</div>'
-      : '<div class="banner info"><strong>Customer says it is still not right 🔄</strong> A follow-up request will come from the room.</div>';
+  const by = r.deliveredBy ? `<div class="small muted" style="margin-top:8px">Handed to the customer by the ${esc(roleLabel(r.deliveredBy).toLowerCase())}.</div>` : '';
+  const say = !r.tryOn ? `${by}<div class="small muted">Customer is trying it on…</div>`
+    : r.tryOn.result === 'fits' ? `${by}<div class="banner good"><strong>Customer says it fits 👍</strong> Close it when they decide.</div>`
+      : `${by}<div class="banner info"><strong>Customer says it is still not right 🔄</strong> A follow-up request will come from the room.</div>`;
   return `${say}${closeBlock(r)}`;
 }
 

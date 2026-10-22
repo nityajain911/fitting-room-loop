@@ -89,6 +89,7 @@ export function render() {
       <div class="row"><span>Escalations / assisted / median time to assist</span><strong>${m.escalations + m.floorTaskEscalations} / ${m.assists} / ${fmtDur(m.medianAssistMs)}</strong></div>
       <div class="row"><span>Cancelled (before accept / after accept / on the way)</span><strong>${m.cancelled} (${m.cancelledByStage.requested} / ${m.cancelledByStage.accepted} / ${m.cancelledByStage.on_the_way})</strong></div>
       <div class="row"><span>Median to hand over (accept → handed to customer)</span><strong>${fmtDur(m.medianDeliverMs)}</strong></div>
+      <div class="row"><span>Handed to the customer by the runner / the floor associate</span><strong>${m.deliveredBy.runner} / ${m.deliveredBy.floor}</strong></div>
       <div class="row"><span>Median to set off (accept → on the way)</span><strong>${fmtDur(m.medianDispatchMs)}</strong></div>
       <div class="row"><span>Median try-on (handed over → closed)</span><strong>${fmtDur(m.medianTryOnMs)}</strong></div>
       <div class="row"><span>Try-on: customer said fits / still not right</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight}</strong></div>

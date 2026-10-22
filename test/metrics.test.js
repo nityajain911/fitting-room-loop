@@ -466,3 +466,10 @@ test('restock tasks are counted apart from customer floor pulls', () => {
 
 import { getSku as getCatalogueSku } from '../shared/catalogue.js';
 const getSkuRack = (id) => getCatalogueSku(id).rack;
+
+test('hand-overs are counted by who did them', () => {
+  const { events, add } = makeLog();
+  const trip = (id, who) => { mk(add, id, 0); add(1, id, 'accepted', { role: 'runner' }); add(2, id, 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' }); add(3, id, 'delivered', {}, who); };
+  trip('a', 'runner'); trip('b', 'floor'); trip('c', 'floor');
+  assert.deepEqual(computeMetrics(events).deliveredBy, { runner: 1, floor: 2 });
+});

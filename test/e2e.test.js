@@ -1100,3 +1100,54 @@ test('closing as "bought alternative" can name which of the brought items was ke
   const r2 = await onTheWayReq(s, { room: 4 });
   assert.equal((await s.call('POST', `/api/requests/${r2}/close`, { outcome: 'left', itemId: trip[0], role: 'runner' })).status, 400);                 // only a purchase has a kept item
 });
+
+// ---------- one hand-over, whoever does it ----------
+const withPull = async (s) => {
+  const r = await onTheWayReq(s);
+  const { body: { taskId } } = await s.call('POST', `/api/requests/${r}/floor-pull`, {});
+  return { r, taskId };
+};
+
+test('when the floor associate hands the items over, the request is delivered and the runner can no longer hand over', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, taskId } = await withPull(s);
+  await s.call('POST', `/api/tasks/${taskId}/accept`, { role: 'floor' });
+  assert.equal((await s.call('POST', `/api/tasks/${taskId}/done`, { role: 'floor' })).status, 200);
+  const d = deriveAll(await s.events());
+  assert.equal(d.byId[r].deliveredTs != null, true);
+  assert.equal(d.byId[r].deliveredBy, 'floor');
+  assert.equal(d.byId[taskId].status, 'done');
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 409); // nothing left for the runner to hand over
+  assert.deepEqual(computeMetrics(await s.events()).deliveredBy, { runner: 0, floor: 1 });
+});
+
+test('when the runner hands the items over, a floor pull still in progress is withdrawn, so the floor associate has nothing to hand over', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const waiting = await withPull(s);                                         // nobody has taken the pull yet
+  assert.equal((await s.call('POST', `/api/requests/${waiting.r}/deliver`, { role: 'runner' })).status, 200);
+  let d = deriveAll(await s.events());
+  assert.deepEqual([d.byId[waiting.taskId].status, d.byId[waiting.taskId].cancelReason], ['cancelled', 'handed_over']);
+  assert.equal(d.byId[waiting.r].deliveredBy, 'runner');
+  assert.equal((await s.call('POST', `/api/tasks/${waiting.taskId}/accept`, { role: 'floor' })).status, 409);
+
+  const taken = await withPull(s);                                           // the floor associate had already accepted it
+  await s.call('POST', `/api/tasks/${taken.taskId}/accept`, { role: 'floor' });
+  await s.call('POST', `/api/requests/${taken.r}/deliver`, { role: 'runner' });
+  d = deriveAll(await s.events());
+  assert.equal(d.byId[taken.taskId].status, 'cancelled');
+  const done = await s.call('POST', `/api/tasks/${taken.taskId}/done`, { role: 'floor' });
+  assert.equal(done.status, 409);
+  assert.match(done.body.error, /cancelled|handed/i);                        // a clear reason, not "accept it first"
+});
+
+test('a pull the floor already finished is left alone when the runner then hands over', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, taskId } = await withPull(s);
+  await s.call('POST', `/api/tasks/${taskId}/accept`, { role: 'floor' });
+  await s.call('POST', `/api/tasks/${taskId}/done`, { role: 'floor' });
+  assert.equal(deriveAll(await s.events()).byId[taskId].status, 'done');
+  assert.equal((await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' })).status, 409);
+});
