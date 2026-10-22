@@ -111,7 +111,10 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     medianTryOnMs: median(closedReqs.filter((r) => r.deliveredTs != null).map((r) => r.closedTs - r.deliveredTs)),
     delivered: requests.filter((r) => rounds.get(r.id).some((d) => d.deliveredTs != null)).length,
     deliveredBy: { runner: allRounds.filter((d) => d.deliveredBy === 'runner').length, floor: allRounds.filter((d) => d.deliveredBy === 'floor').length },
-    tryOn: { fits: allRounds.filter((d) => d.tryOn?.result === 'fits').length, notRight: allRounds.filter((d) => d.tryOn?.result === 'not_right').length },
+    // What customers said. Kept apart from what the staff recorded: a purchase after a try-on is not a customer tapping "fits".
+    tryOn: { fits: allRounds.filter((d) => d.tryOn?.result === 'fits').length, notRight: allRounds.filter((d) => d.tryOn?.result === 'not_right').length, done: allRounds.filter((d) => d.tryOn?.result === 'no_more').length },
+    boughtAfterTryOn: closedReqs.filter((r) => r.deliveredTs != null && SAVE_OUTCOMES.includes(r.outcome)).length,
+    laterAttempts: laterAttempts(allRounds),
     rounds: allRounds.length,
     retried: requests.filter((r) => r.round > 1).length, // needed another attempt
     savedAfterRetry: closedReqs.filter((r) => r.round > 1 && SAVE_OUTCOMES.includes(r.outcome)).length,
@@ -237,6 +240,16 @@ function buildSignals(groups, inventory, cfg, catalogue, deliveries = {}) {
     }
   }
   return out;
+}
+
+/** Response times of the second attempt and later, on their own: the customer's try-on time never counts against the team. */
+function laterAttempts(allRounds) {
+  const later = allRounds.filter((d) => d.n > 1);
+  return {
+    n: later.length,
+    medianAcceptMs: median(later.filter((d) => d.acceptedTs != null).map((d) => d.acceptedTs - d.openedTs)),
+    medianDeliverMs: median(later.filter((d) => d.acceptedTs != null && d.deliveredTs != null).map((d) => d.deliveredTs - d.acceptedTs)),
+  };
 }
 
 export const HEATMAP_AREAS = ['waist', 'chest', 'shoulders', 'sleeves', 'length', 'hips'];

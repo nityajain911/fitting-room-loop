@@ -4,17 +4,21 @@
 //   form     (#customer)      — pick the garment and the problem. The room is locked into a header pill.
 //   tracker  (#customer/<id>) — one active order card. The form is not rendered, so nothing can be edited by accident.
 import { S, hooks, handlers, api, act, esc, toast, issuesText, itemName, STAGE_TEXT } from './core.js';
-import { oppositeIssue } from '/shared/events.js';
+import { toggleIssue, FITTING_ROOMS } from '/shared/events.js';
 import { CATALOGUE, garments, getSku, stylesFor } from '/shared/catalogue.js';
 import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
 import { tripItemName } from '/shared/visuals.js';
 
-const ROOMS = [1, 2, 3, 4, 5, 6, 7, 8];
-let roomLocked = false;  // the room came from the URL (one QR code per fitting-room door)
-let pickingRoom = false; // the customer tapped "Change"
-const blank = () => ({ dept: 'Men', name: null, styleName: null, colour: null, size: null, cut: null, followsId: null, followItems: new Set(), issues: [], chips: new Set(), styleAxes: new Set(), busy: false });
+// Each tablet lives in one fitting room. It learns its room once, from its link (/#customer?room=3, one per door), and
+// remembers it. Customers never choose or change it: the screen has no room picker.
+const ROOM_KEY = 'frl.room';
+const pairedRoom = () => {
+  try { const n = Number(localStorage.getItem(ROOM_KEY)); return Number.isInteger(n) && n >= 1 && n <= 99 ? n : null; } catch { return null; }
+};
+const pairRoom = (n) => { try { localStorage.setItem(ROOM_KEY, String(n)); } catch { /* private mode: the link keeps it working */ } };
+const blank = () => ({ dept: 'Men', name: null, styleName: null, colour: null, size: null, cut: null, followsId: null, followItem: null, issues: [], chips: new Set(), styleAxes: new Set(), busy: false });
 const form = { room: null, ...blank() };
 /** Start a fresh request: everything is cleared except the room, which stays locked. */
 const resetForm = () => Object.assign(form, blank());
@@ -37,11 +41,7 @@ const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 const opt = (action, v, label, on, cls = '') =>
   `<button type="button" class="opt ${cls} ${on ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
 
-handlers['c-room'] = (el) => { form.room = Number(el.dataset.v); pickingRoom = false; hooks.render(); };
-handlers['c-room-change'] = () => {
-  pickingRoom = true;
-  if (roomLocked) location.hash = '#customer'; else hooks.render(); // drop the QR room from the URL so the picker can be used
-};
+handlers['c-room'] = (el) => { form.room = Number(el.dataset.v); pairRoom(form.room); hooks.render(); }; // first-time setup of this tablet
 handlers['c-dept'] = (el) => {
   if (form.dept === el.dataset.v) return;
   // sizes and designs differ by department, so the garment starts over; the issue and body areas are about the
@@ -81,14 +81,7 @@ handlers['c-size'] = (el) => {
 };
 handlers['c-cut'] = (el) => { form.cut = el.dataset.v; hooks.render(); };
 handlers['c-issue'] = (el) => {
-  const k = el.dataset.v;
-  if (!FIT_ISSUES.includes(k)) form.issues = [k]; // size, style and stock checks stand alone
-  else if (form.issues.includes(k)) form.issues = form.issues.filter((x) => x !== k);
-  else {
-    // a fit issue joins the other fit issues (at most two), replaces its opposite, and replaces any non-fit choice
-    const keep = form.issues.filter((x) => FIT_ISSUES.includes(x) && x !== oppositeIssue(k));
-    form.issues = [...keep, k].slice(-2);
-  }
+  form.issues = toggleIssue(form.issues, el.dataset.v);
   if (!form.issues.some((x) => FIT_ISSUES.includes(x))) form.chips = new Set(); // body areas only apply to fit issues
   if (!form.issues.includes('another_style')) form.styleAxes = new Set(); // style details only apply to "Another style"
   hooks.render();
@@ -115,13 +108,13 @@ handlers['c-leave'] = async (el) => {
   if (!confirm(msg)) return;
   const out = await act(() => api('POST', `/api/rooms/${room}/release`));
   if (!out) return;
-  resetForm(); form.room = null; roomLocked = false; pickingRoom = false;
+  resetForm(); form.room = room; // the next customer starts clean, in the same room
   location.hash = '#customer';
   toast('Thanks! See you again.');
   hooks.render();
 };
 handlers['c-tryon'] = async (el) => {
-  const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: el.dataset.result }));
+  const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: el.dataset.result })); // fits / not_right / no_more
   if (out && el.dataset.result === 'not_right') location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`;
 };
 handlers['c-another'] = (el) => { location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`; };
@@ -130,10 +123,7 @@ handlers['c-cancel'] = async (el) => {
   if (!confirm('Cancel this request? The team will be told you no longer need help.')) return;
   await act(() => api('POST', `/api/requests/${el.dataset.v}/cancel`));
 };
-handlers['c-pick'] = (el) => {
-  if (form.followItems.has(el.dataset.v)) form.followItems.delete(el.dataset.v); else form.followItems.add(el.dataset.v);
-  hooks.render();
-};
+handlers['c-pick'] = (el) => { form.followItem = el.dataset.v; hooks.render(); }; // the one that came closest
 handlers['c-submit'] = async () => {
   if (form.followsId) return submitFollowUps();
   const sku = resolveSku();
@@ -156,8 +146,8 @@ handlers['c-submit'] = async () => {
   }
 };
 
-/** The delivered items of a request that have not been reported yet. */
-const remainingItems = (r) => (r?.reportable || []).filter((id) => getSku(id));
+/** The items just brought and tried: the customer says which came closest. */
+const triedItems = (r) => (r?.onTheWay?.items || []).map((i) => i.itemId).filter((id) => getSku(id));
 
 /** What to call an item the team brought: its size and cut as it differs from the garment it was brought for. */
 const broughtName = (r, id) => {
@@ -169,19 +159,19 @@ const broughtName = (r, id) => {
 /** "Still not right": a form to pick which of the delivered items to report (one or several), and what is wrong. */
 function startFollowUp(id) {
   const r = S.derived.byId[id];
-  const left = remainingItems(r);
+  const left = triedItems(r);
   if (!r || r.status !== 'on_the_way' || r.deliveredTs == null || !left.length) return;
-  Object.assign(form, { ...blank(), room: r.room, followsId: id, followItems: new Set(left.length === 1 ? left : []) }); // one item left: nothing to choose
+  Object.assign(form, { ...blank(), room: r.room, followsId: id, followItem: left.length === 1 ? left[0] : null }); // one item: nothing to choose
 }
 
 async function submitFollowUps() {
-  const items = [...form.followItems];
-  if (form.busy || !items.length || !form.issues.length) return;
+  const item = form.followItem;
+  if (form.busy || !item || !form.issues.length) return;
   const text = (document.getElementById('c-text')?.value || '').trim();
   form.busy = true;
   hooks.render();
   const out = await act(() => api('POST', `/api/requests/${form.followsId}/rounds`, {
-    items, issues: [...form.issues], chips: [...form.chips], styleAxes: form.issues.includes('another_style') ? [...form.styleAxes] : [], text,
+    item, issues: [...form.issues], chips: [...form.chips], styleAxes: form.issues.includes('another_style') ? [...form.styleAxes] : [], text,
   }));
   form.busy = false;
   if (out?.round) {
@@ -197,11 +187,11 @@ async function submitFollowUps() {
 
 export function render({ args, query }) {
   const n = Number(query?.get('room'));
-  roomLocked = Number.isInteger(n) && n >= 1 && n <= 99;
-  if (roomLocked) form.room = n;
+  if (Number.isInteger(n) && n >= 1 && n <= 99) { pairRoom(n); form.room = n; } // this tablet's link sets (or resets) its room
+  else if (!form.room) form.room = pairedRoom();
   const from = query?.get('from');
   if (from && form.followsId !== from && !args[0]) startFollowUp(from);
-  if (!from && form.followsId) Object.assign(form, { followsId: null, followItems: new Set() }); // left the follow-up: back to the normal form
+  if (!from && form.followsId) Object.assign(form, { followsId: null, followItem: null }); // left the follow-up: back to the normal form
   return args[0] ? tracker(args[0]) : formView();
 }
 
@@ -210,7 +200,7 @@ const roomOpen = (room) => S.derived.requests.filter((r) => r.room === room && i
 /** The room, locked into the header once chosen. */
 function roomBar() {
   return `<div class="roombar"><span>📍 <strong>Room ${esc(form.room)}</strong></span>
-    <span><button class="link-btn" data-action="c-leave" data-room="${esc(form.room)}">I'm done with this room</button> <button class="link-btn" data-action="c-room-change">Change</button></span></div>`;
+    <span><button class="link-btn" data-action="c-leave" data-room="${esc(form.room)}">I'm done with this room</button></span></div>`;
 }
 
 /**
@@ -237,37 +227,44 @@ function issueSection(axes) {
     <div class="opts">${axes.map((a) => opt('c-style-axis', a, STYLE_AXIS_LABELS[a], form.styleAxes.has(a))).join('')}</div>` : ''}`;
 }
 
-/** "Still not right": pick the delivered items to report again, say what is wrong, and one request goes out per item. */
+/** "Still not right": which item came closest, and what was still off with it. That one item starts the next attempt. */
 function followUpView() {
   const original = S.derived.byId[form.followsId];
-  const items = remainingItems(original);
-  if (!original || !items.length) return '<div class="card"><h3>Nothing left to report</h3><button class="btn primary" data-action="c-new">New request</button></div>';
-  const kind = styleKind(getSku(items[0]).category);
-  const picked = items.filter((id) => form.followItems.has(id));
-  const ready = picked.length > 0 && form.issues.length > 0 && !form.busy;
+  const items = original ? triedItems(original) : [];
+  if (!original || !items.length) return '<div class="card"><h3>Nothing to report</h3><button class="btn primary" data-action="c-new">New request</button></div>';
+  const chosen = items.includes(form.followItem) ? form.followItem : null;
+  const kind = styleKind(getSku(chosen || items[0]).category);
+  const ready = !!chosen && form.issues.length > 0 && !form.busy;
   return `
-    <div class="row"><h1>Which ones aren't right?</h1><span class="badge-anon">🔒 Anonymous</span></div>
+    <div class="row"><h1>Which one came closest?</h1><span class="badge-anon">🔒 Anonymous</span></div>
     <a class="back-link" href="#customer/${esc(original.id)}">✕ Cancel — back to your request</a>
     <div class="roombar"><span>📍 <strong>Room ${esc(original.room)}</strong></span></div>
 
-    <h2>${items.length > 1 ? 'Tap each one that is still not right' : 'The one that is still not right'}</h2>
-    <div class="opts">${items.map((id) => opt('c-pick', id, broughtName(original, id), form.followItems.has(id))).join('')}</div>
-    <div class="small muted">${items.length > 1 ? 'The ones you leave out, we leave as they are. ' : ''}You can report the rest later, with a different issue.</div>
+    <h2>${items.length > 1 ? 'Which item came closest to fitting?' : 'The item we brought'}</h2>
+    <div class="opts">${items.map((id) => opt('c-pick', id, broughtName(original, id), chosen === id)).join('')}</div>
 
+    ${chosen ? `<h2 style="margin-top:14px">What was still off with the ${esc(broughtName(original, chosen))}?</h2>
     ${issueSection(STYLE_AXES[kind] || [])}
     ${whereView(CHIPS_BY_KIND[kind === 'trousers' ? 'trousers' : 'top'], true)}
 
     <h2>Add a note <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
-    <textarea id="c-text" data-keep="c-text" maxlength="500" placeholder="English, हिन्दी or Hinglish — e.g. “kamar pe tight hai”"></textarea>
+    <textarea id="c-text" data-keep="c-text" maxlength="500" placeholder="English, हिन्दी or Hinglish — e.g. “kamar pe tight hai”"></textarea>` : ''}
 
     <div class="cta-wrap">
       <button class="btn primary block" data-action="c-submit" ${ready ? '' : 'disabled'}>${form.busy ? 'Sending…'
-        : !picked.length ? 'Select the items to continue' : !form.issues.length ? 'Select the issue to continue'
-          : `Report ${picked.length === 1 ? 'this item' : `these ${picked.length} items`}`}</button>
+        : !chosen ? 'Pick the item that came closest' : !form.issues.length ? 'Select what was still off' : 'Find another'}</button>
     </div>`;
 }
 
+/** Only on a tablet that has never been told its room. Customers do not see this: it is set up once, from the room's link. */
+function setupView() {
+  return `<div class="row"><h1>Set up this tablet</h1></div>
+    <p class="muted">Which fitting room is this tablet in? It remembers the answer. (Admin has a link for each room.)</p>
+    <div class="opts">${FITTING_ROOMS.map((r) => opt('c-room', r, `Room ${r}`, false)).join('')}</div>`;
+}
+
 function formView() {
+  if (!form.room) return setupView();
   if (form.followsId) return followUpView();
   const sku = resolveSku();
   const sizes = form.name ? sizesFor(form.name) : [];
@@ -279,7 +276,7 @@ function formView() {
     <div class="row"><h1>What's not working?</h1><span class="badge-anon">🔒 Anonymous</span></div>
     ${open.length ? `<a class="back-link" href="#customer/${esc(open[open.length - 1].id)}">✕ Cancel — back to your request${open.length > 1 ? 's' : ''}</a>` : ''}
 
-    ${form.room && !pickingRoom ? roomBar() : `<h2>Fitting room</h2><div class="opts">${ROOMS.map((r) => opt('c-room', r, `Room ${r}`, form.room === r)).join('')}</div>`}
+    ${roomBar()}
 
     <div class="seg" role="tablist" aria-label="Section">${DEPTS.map(([k, l]) => `<button type="button" class="${form.dept === k ? 'on' : ''}" data-action="c-dept" data-v="${k}">${l}</button>`).join('')}</div>
 
@@ -316,8 +313,10 @@ function stepper(r, steps, cancelled) {
 function incoming(r) {
   if (r.status === 'cancelled') return `<div class="banner alert">You cancelled this request ${esc(STAGE_TEXT[r.cancelStage] || '')}. Nothing more is needed.</div>`;
   if (r.status === 'closed') return '<div class="incoming done">All done. Thanks for letting us help.</div>';
-  if (r.status === 'requested') return '<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>';
-  if (r.status === 'accepted' || !r.onTheWay) return '<div class="incoming wait"><span class="spin"></span>Checking stock…</div>';
+  // From the second attempt on, the earlier items are still in the room: say what happens to them.
+  const swap = r.round > 1 ? '<div class="small muted" style="margin-top:8px">Keep the earlier items in your room. Your runner will swap them when bringing the next ones.</div>' : '';
+  if (r.status === 'requested') return `<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>${swap}`;
+  if (r.status === 'accepted' || !r.onTheWay) return `<div class="incoming wait"><span class="spin"></span>Checking stock…</div>${swap}`;
 
   const trip = r.onTheWay.items.map((i) => ({ sku: getSku(i.itemId), id: i.itemId })).filter((x) => x.sku);
   const many = trip.length > 1;
@@ -340,6 +339,7 @@ function incoming(r) {
 /** After the item has been handed over: how does it fit? A statement from the customer, never an outcome. */
 function tryOnBlock(r, many) {
   if (r.tryOn?.result === 'fits') return '<div class="small" style="margin-top:10px">Glad it fits! The team will wrap up with you.</div>';
+  if (r.tryOn?.result === 'no_more') return '<div class="small" style="margin-top:10px">Thanks! No more sizes coming. The team will wrap up with you.</div>';
   if (r.tryOn?.result === 'not_right') {
     return `<div class="small" style="margin-top:10px">Thanks, let's find another.</div>
       <button class="btn primary block" style="margin-top:8px" data-action="c-another" data-v="${esc(r.id)}">Tell us what's still not right</button>`;
@@ -348,7 +348,8 @@ function tryOnBlock(r, many) {
     <div class="btn-grid" style="margin-top:8px">
       <button class="btn primary" data-action="c-tryon" data-result="fits" data-v="${esc(r.id)}">👍 Fits great</button>
       <button class="btn" data-action="c-tryon" data-result="not_right" data-v="${esc(r.id)}">🔄 Still not right</button>
-    </div>`;
+    </div>
+    <button class="link-btn muted-btn" style="margin-top:6px" data-action="c-tryon" data-result="no_more" data-v="${esc(r.id)}">👋 I'm all set — no more sizes needed</button>`;
 }
 
 /** Other open requests from this room as compact cards, read from the shared log (a room number is not personal data). */

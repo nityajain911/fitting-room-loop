@@ -33,11 +33,21 @@ export function normaliseIssues(list) {
   if (issues.length > 2 || issues.some((k) => issues.includes(OPPOSITE[k]))) throw new Error('Those issues contradict each other');
   return issues;
 }
+/** What the issues become when one is tapped: fit issues add up to two (the opposite swaps in); anything else stands alone. */
+export function toggleIssue(list, k) {
+  if (!FIT_ISSUES.includes(k)) return [k];
+  if (list.includes(k)) return list.filter((x) => x !== k);
+  const keep = list.filter((x) => FIT_ISSUES.includes(x) && x !== OPPOSITE[k]);
+  return [...keep, k].slice(-2);
+}
 export const issuesLabel = (issues) => issues.map((k) => ISSUES[k] || k).join(' + ');
 export const oppositeIssue = (k) => OPPOSITE[k] ?? null;
 
 export const ISSUE_TO_WORD = { too_tight: 'tight', too_loose: 'loose', too_long: 'long', too_short: 'short' };
 export const WORD_TO_ISSUE = { tight: 'too_tight', loose: 'too_loose', long: 'too_long', short: 'too_short' };
+
+// The fitting rooms of the store (one tablet each). Admin lists a link per room; the customer screen has no room picker.
+export const FITTING_ROOMS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 export const CHIPS = ['waist', 'chest', 'shoulders', 'sleeves', 'length', 'hips'];
 // Which body-area chips make sense for which garments (the customer is never asked about sleeves on trousers).
@@ -57,7 +67,9 @@ export const OUTCOMES = {
 export const RESTOCK_KINDS = { recount: 'Recount the rack', replenish: 'Restock near the fitting rooms' };
 export const RESTOCK_SIGNAL = { recount: 'inventory', replenish: 'high_demand' };
 export const OUTCOME_LABELS = { ...OUTCOMES };
-export const TRYON_RESULTS = ['fits', 'not_right'];
+// What the customer says after trying the items on: "fits" (keeping one), "not_right" (another attempt), "no_more" (all set,
+// no more sizes needed). Statements only: the staff still record the real outcome.
+export const TRYON_RESULTS = ['fits', 'not_right', 'no_more'];
 export const SAVE_OUTCOMES = ['bought_original', 'bought_alternative', 'cross_store_order'];
 
 export const ROLES = { runner: 'Fitting-room runner', floor: 'Floor associate' };

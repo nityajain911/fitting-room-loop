@@ -4,6 +4,7 @@ import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, descri
 import { computeMetrics } from '/shared/metrics.js';
 import { stageLimits } from '/shared/derive.js';
 import { SKILLS } from '/shared/skills.js';
+import { FITTING_ROOMS } from '/shared/events.js';
 import { loadOf } from '/shared/staffing.js';
 import { DEFAULTS } from '/shared/config.js';
 
@@ -67,6 +68,8 @@ export function render() {
     <div class="row"><h1>Admin</h1><button class="btn danger" data-action="m-clear">Clear demo data</button></div>
     <p class="muted small">Prototype internals. Not part of the store manager's view.</p>
 
+    ${tabletLinks()}
+
     ${teamSection()}
 
     ${escalationTimes(c)}
@@ -92,7 +95,9 @@ export function render() {
       <div class="row"><span>Handed to the customer by the runner / the floor associate</span><strong>${m.deliveredBy.runner} / ${m.deliveredBy.floor}</strong></div>
       <div class="row"><span>Median to set off (accept → on the way)</span><strong>${fmtDur(m.medianDispatchMs)}</strong></div>
       <div class="row"><span>Median try-on (handed over → closed)</span><strong>${fmtDur(m.medianTryOnMs)}</strong></div>
-      <div class="row"><span>Try-on: customer said fits / still not right</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight}</strong></div>
+      <div class="row"><span>Customers said: fits / still not right / all set</span><strong>${m.tryOn.fits} / ${m.tryOn.notRight} / ${m.tryOn.done}</strong></div>
+      <div class="row"><span>Closed as a purchase after a try-on (recorded by staff)</span><strong>${m.boughtAfterTryOn}</strong></div>
+      <div class="row"><span>Second attempts and later: median to accept / to hand over (n)</span><strong>${fmtDur(m.laterAttempts.medianAcceptMs)} / ${fmtDur(m.laterAttempts.medianDeliverMs)} (${m.laterAttempts.n})</strong></div>
       <div class="row"><span>Requests that needed another attempt / of those, saved</span><strong>${m.retried} / ${m.savedAfterRetry}</strong></div>
       <div class="row"><span>Attempts in total</span><strong>${m.rounds}</strong></div>
       <div class="row"><span>Restock tasks from the Manager: done / sent</span><strong>${m.restock.done} / ${m.restock.requested}</strong></div>
@@ -136,6 +141,14 @@ function escalationTimes(c) {
 }
 
 const STATE_OF = (p, k) => (p.primary.includes(k) ? 'primary' : p.secondary.includes(k) ? 'secondary' : 'none');
+
+/** One link per fitting room. A tablet is opened on its link once and remembers the room: customers never pick one. */
+function tabletLinks() {
+  return `<h2>Tablets</h2><div class="card stack">
+    <div class="small muted">Open each link once on the tablet in that room. It remembers its room, and customers never choose one. To move a tablet, open the new room's link on it.</div>
+    ${FITTING_ROOMS.map((n) => `<div class="row small"><span>Room ${n}</span><a class="link" href="#customer?room=${n}" style="user-select:all">${esc(`${location.origin}/#customer?room=${n}`)}</a></div>`).join('')}
+  </div>`;
+}
 
 /** The roster. The admin gives each person a role and primary / backup sections; phones join with the code. */
 function teamSection() {

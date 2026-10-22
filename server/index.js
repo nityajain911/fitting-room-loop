@@ -11,7 +11,7 @@ import { CATALOGUE, CATALOGUE_LABEL, getSku, skuLabel } from '../shared/catalogu
 import { computeMetrics } from '../shared/metrics.js';
 import { ISSUES, CHIPS, OUTCOMES, TRYON_RESULTS, RESTOCK_KINDS, RESTOCK_SIGNAL, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
 import { routeFor } from '../shared/routing.js';
-import { deriveAll, isOpen, effectiveCatalogue, excludedIds, stageOf, stageStart, stageLimits, ownerRole } from '../shared/derive.js';
+import { deriveAll, isOpen, effectiveCatalogue, suggestionExclusions, stageOf, stageStart, stageLimits, ownerRole } from '../shared/derive.js';
 import { normaliseStaff, MAX_STAFF, nextAssignment, accessFor } from '../shared/staffing.js';
 import { mergeIssue, fitMatch, combineSuggestions, optionFor, suggestionItemIds } from '../shared/fitMatch.js';
 import { parseCustomerText, parseReasonText, validateReason } from '../shared/parser.js';
@@ -146,7 +146,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     const r = d.byId[id];
     const cur = r.cur; // the attempt in progress: its items and what is wrong with them
     const live = effectiveCatalogue(catalogue, d.discrepancies);
-    const excludeIds = excludedIds(r); // missing on the rack, declined, and (from the second attempt) everything already tried
+    const excludeIds = suggestionExclusions(r, catalogue); // missing on the rack, declined, and (from the second attempt) everything already tried, in every colour
     const perItem = cur.skuIds.map((baseId) => {
       const sku = getSku(baseId, catalogue);
       const issueInfo = mergeIssue({ sku, issue: cur.issue, issues: cur.issues, chips: cur.chips, styleAxes: cur.styleAxes, parsed: cur.parsed, parseMethod: cur.method });
@@ -289,24 +289,42 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     res.json({ requestId: id, method: parsed.method });
   });
 
-  // "Still not right": the SAME request starts another attempt, for the delivered items the customer picks (one or
-  // several), with what is wrong. Nothing new is created to track: one request, one timeline, one outcome. It goes
-  // back to waiting (to the same runner first), with its own clocks, and gets a suggestion for each picked item.
+  // "Still not right": the SAME request starts another attempt. The customer says which of the items they tried came
+  // closest and what was still off with it; that one item is the starting point for the next suggestion (everything
+  // already brought is left out, in every colour). Nothing new is created to track: one request, one timeline, one
+  // outcome. It goes back to waiting (to the same runner first), with its own clocks. The runner can open it too, from
+  // the door, when the customer says it aloud: then it is theirs at once, with the suggestion ready.
   app.post('/api/requests/:id/rounds', async (req, res) => {
     const r = derived().byId[req.params.id];
     if (!r || r.kind !== 'request') throw missing('Request not found');
     if (r.status !== 'on_the_way' || r.deliveredTs == null) throw conflict('Items can be reported once they have been handed over');
-    if (r.tryOn?.result === 'fits') throw conflict('You already told us it fits');
-    const items = req.body?.items;
-    if (!Array.isArray(items) || !items.length || items.length > 5 || new Set(items).size !== items.length) throw bad('Pick between 1 and 5 different items');
-    if (items.some((id) => !r.reportable.includes(id))) throw bad('Those items cannot be reported (not delivered, or already reported)');
+    const staffRole = req.body?.role in ROLES ? req.body.role : null; // set by the associate screens, never by the customer's
+    if (!staffRole && ['fits', 'no_more'].includes(r.tryOn?.result)) throw conflict('You already told us you are all set');
+    const item = req.body?.item;
+    if (typeof item !== 'string' || !(r.onTheWay?.items || []).some((i) => i.itemId === item)) throw bad('Pick the item that came closest, from the ones we brought');
     const fields = readRequestFields(req.body);
+    let taken = {};
+    if (staffRole) {
+      if (staffRole !== r.route?.role) throw bad(`This request is with the ${r.route?.role} team`);
+      if (staff.length) {
+        const who = staff.find((x) => x.id === req.body?.staffId);
+        if (!who) throw new HttpError(403, 'Join as a team member first');
+        if (who.type !== staffRole) throw bad(`${who.label} is a ${ROLES[who.type]}, not a ${ROLES[staffRole]}`);
+        touch(who.id);
+        taken = { staffId: who.id, tier: 'primary' }; // they are at the door with the customer: it is theirs
+      }
+    }
+    const actor = staffRole || 'customer';
     const parsed = await parseCustomerText(fields.text, llmFor(req));
-    if (!r.tryOn) append(r.id, 'tryon_feedback', 'customer', { result: 'not_right' }); // saying so is the same as answering the try-on question
-    append(r.id, 'round_opened', 'customer', {
-      baselineIds: items, issue: fields.issues[0], issues: fields.issues, chips: [...new Set(fields.chips)], parsed: parsed.fields, method: parsed.method,
-      styleAxes: fields.issues[0] === 'another_style' ? [...new Set(fields.styleAxes)] : [],
+    if (!r.tryOn) append(r.id, 'tryon_feedback', actor, { result: 'not_right' }); // saying so answers the try-on question too
+    append(r.id, 'round_opened', actor, {
+      baselineIds: [item], issue: fields.issues[0], issues: fields.issues, chips: [...new Set(fields.chips)], parsed: parsed.fields, method: parsed.method,
+      styleAxes: fields.issues[0] === 'another_style' ? [...new Set(fields.styleAxes)] : [], by: actor,
     });
+    if (staffRole) {
+      append(r.id, 'accepted', staffRole, { role: staffRole, ...taken });
+      append(r.id, 'suggestion_shown', staffRole, suggest(r.id));
+    }
     assignPending();
     res.json({ ok: true, round: derived().byId[r.id].round, method: parsed.method });
   });

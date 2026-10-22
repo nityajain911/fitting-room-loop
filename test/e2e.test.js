@@ -1143,113 +1143,131 @@ const deliveredTrip = async (s, extra = {}) => {
 };
 const roundsCall = (s, r, body) => s.call('POST', `/api/requests/${r}/rounds`, body);
 
-test('"still not right" opens a second attempt on the SAME request, for the items the customer picks', async (t) => {
+test('"still not right": the customer says which item came closest and what was off, and the SAME request opens a second attempt', async (t) => {
   const s = await boot();
   t.after(s.close);
   const { r, trip } = await deliveredTrip(s, { room: 3 });
   assert.ok(trip.length >= 3);
-  const out = await roundsCall(s, r, { items: [trip[0], trip[2]], issues: ['too_loose'], chips: ['chest'] });
+  const out = await roundsCall(s, r, { item: trip[1], issues: ['too_loose'], chips: ['chest'] });
   assert.equal(out.status, 200);
   assert.equal(out.body.round, 2);
   const d = deriveAll(await s.events());
   assert.equal(d.requests.length, 1);                                               // still one request
   const q = d.byId[r];
-  assert.deepEqual([q.round, q.status, q.cur.skuIds, q.cur.issue], [2, 'requested', [trip[0], trip[2]], 'too_loose']);
-  assert.equal(q.pastRounds[0].tryOn.result, 'not_right');                          // saying so is recorded for them
-  assert.deepEqual(q.reportable, [trip[1]]);                                        // the one they left out can still be reported
+  assert.deepEqual([q.round, q.status, q.cur.skuIds, q.cur.issue, q.cur.reportedBy], [2, 'requested', [trip[1]], 'too_loose', 'customer']);
+  assert.equal(q.pastRounds[0].tryOn.result, 'not_right');                          // saying so answers the try-on question too
   const m = computeMetrics(await s.events());
   assert.deepEqual([m.total, m.closed, m.retried], [1, 0, 1]);
 });
 
-test('the second attempt gets a suggestion for each picked item, never offering what was already brought', async (t) => {
+test('the second attempt starts from that one item: it is suggested what moves from it, never what was already tried, in any colour', async (t) => {
   const s = await boot();
   t.after(s.close);
   const { r, trip } = await deliveredTrip(s, { room: 3 });
-  await roundsCall(s, r, { items: [trip[0], trip[1]], issues: ['too_loose'], chips: ['chest'] });
+  await roundsCall(s, r, { item: trip[0], issues: ['too_loose'], chips: ['chest'] });
   assert.equal((await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' })).status, 200);
   const sug = (await s.events()).filter((e) => e.type === 'suggestion_shown' && e.requestId === r).pop().payload;
   assert.ok(sug.options.length >= 1);
-  const tried = new Set([...trip, 'OX-L-SLIM']);
-  for (const o of sug.options) {
-    assert.ok(!tried.has(o.itemId), `${o.itemId} was already tried`);
-    assert.ok([trip[0], trip[1]].includes(o.forId), 'each option says which picked item it is for');
-  }
-  assert.deepEqual(new Set(sug.options.map((o) => o.forId)).size >= 1, true);
-  // confirm and hand over: the items remember what they were for
+  assert.ok(sug.options.every((o) => o.forId === trip[0]));                         // everything is for the one item
+  const fit = (id) => { const x = CATALOGUE.find((c) => c.id === id); return `${x.line}|${x.size}|${x.cut}`; };
+  const triedFits = new Set([...trip, 'OX-L-SLIM'].map(fit));
+  for (const o of sug.options) assert.ok(!triedFits.has(fit(o.itemId)), `${o.itemId} has the same size and cut as something already tried`);
   assert.equal((await s.call('POST', `/api/requests/${r}/confirm`, {})).status, 200);
-  const trip2 = deriveAll(await s.events()).byId[r].onTheWay.items;
-  assert.ok(trip2.every((i) => [trip[0], trip[1]].includes(i.forId)));
+  assert.ok(deriveAll(await s.events()).byId[r].onTheWay.items.every((i) => i.forId === trip[0]));
 });
 
-test('attempts have their own clocks: it waits to be accepted again, and can escalate again', async (t) => {
-  const s = await boot();
-  t.after(s.close);
-  const { r, trip } = await deliveredTrip(s, { room: 3 });
-  s.advance(300_000); s.sweep();                                                    // idle try-on time must not count as lateness
-  assert.equal((await s.events()).filter((e) => e.type === 'escalated').length, 0);
-  await roundsCall(s, r, { items: [trip[0]], issues: ['too_loose'] });
-  s.advance(119_000); s.sweep();
-  assert.equal((await s.events()).filter((e) => e.type === 'escalated').length, 0); // 119 s into this attempt
-  s.advance(2_000); s.sweep(); s.sweep();
-  const esc = (await s.events()).filter((e) => e.type === 'escalated');
-  assert.deepEqual(esc.map((e) => e.payload.stage), ['accept']);                    // not accepted in time, this attempt
-});
-
-test('an attempt is validated: delivered request only, picked items that were delivered and not yet reported', async (t) => {
+test('an attempt is validated: handed over, one item from the trip just tried, a sensible issue', async (t) => {
   const s = await boot();
   t.after(s.close);
   const { r, trip } = await deliveredTrip(s, { room: 3 });
   const bad = (b) => roundsCall(s, r, b);
-  assert.equal((await bad({ items: [], issues: ['too_loose'] })).status, 400);
-  assert.equal((await bad({ items: ['OX-XXL-REG-NOPE'], issues: ['too_loose'] })).status, 400);
-  assert.equal((await bad({ items: [trip[0], trip[0]], issues: ['too_loose'] })).status, 400);
-  assert.equal((await bad({ items: [trip[0]], issues: ['too_tight', 'too_loose'] })).status, 400);
-  assert.equal((await bad({ items: [trip[0]] })).status, 400);
-  assert.equal((await bad({ items: Array(6).fill(trip[0]), issues: ['too_loose'] })).status, 400);
-  assert.equal(deriveAll(await s.events()).byId[r].round, 1);                       // refusals change nothing
-  const undelivered = await onTheWayReq(s, { room: 4 });
-  assert.equal((await roundsCall(s, undelivered, { items: [trip[0]], issues: ['too_loose'] })).status, 409);
-  assert.equal((await s.call('POST', '/api/requests/nope/rounds', { items: [trip[0]], issues: ['too_loose'] })).status, 404);
-  assert.equal((await bad({ items: [trip[0]], issues: ['too_loose'] })).status, 200);
-  assert.equal((await bad({ items: [trip[0]], issues: ['too_loose'] })).status, 409);              // waiting for the team now, not in the try-on
+  assert.equal((await bad({ issues: ['too_loose'] })).status, 400);                                     // no item
+  assert.equal((await bad({ item: 'OX-XXL-REG-NOPE', issues: ['too_loose'] })).status, 400);            // not something that was brought
+  assert.equal((await bad({ item: [trip[0]], issues: ['too_loose'] })).status, 400);                    // one item, not a list
+  assert.equal((await bad({ item: trip[0], issues: ['too_tight', 'too_loose'] })).status, 400);         // contradictory
+  assert.equal((await bad({ item: trip[0] })).status, 400);                                             // no issue at all
+  assert.equal(deriveAll(await s.events()).byId[r].round, 1);                                           // refusals change nothing
+  const undelivered = await onTheWayReq(s, { room: 4 });                                                // not handed over yet
+  assert.equal((await roundsCall(s, undelivered, { item: trip[0], issues: ['too_loose'] })).status, 409);
+  assert.equal((await s.call('POST', '/api/requests/nope/rounds', { item: trip[0], issues: ['too_loose'] })).status, 404);
+  assert.equal((await bad({ item: trip[0], issues: ['too_loose'] })).status, 200);
+  assert.equal((await bad({ item: trip[0], issues: ['too_loose'] })).status, 409);                      // with the team now
 });
 
-test('"fits great" ends the possibility of reporting; the request is closed by the staff with the real outcome', async (t) => {
+test('"fits great" or "no more needed" ends what the customer can report; the staff close it with the real outcome', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  for (const result of ['fits', 'no_more']) {
+    const { r, trip } = await deliveredTrip(s, { room: result === 'fits' ? 3 : 4 });
+    assert.equal((await s.call('POST', `/api/requests/${r}/try-on`, { result })).status, 200);
+    assert.equal((await roundsCall(s, r, { item: trip[0], issues: ['too_loose'] })).status, 409);
+    assert.equal(deriveAll(await s.events()).byId[r].status, 'on_the_way');                           // not closed by the customer
+  }
+  assert.equal(computeMetrics(await s.events()).tryOn.done, 1);
+});
+
+test('after the second attempt is handed over, the customer can again name the closest item and go on', async (t) => {
   const s = await boot();
   t.after(s.close);
   const { r, trip } = await deliveredTrip(s, { room: 3 });
-  await s.call('POST', `/api/requests/${r}/try-on`, { result: 'fits' });
-  assert.equal((await roundsCall(s, r, { items: [trip[0]], issues: ['too_loose'] })).status, 409);
-});
-
-test('items from an earlier attempt can be reported in a later one, once each', async (t) => {
-  const s = await boot();
-  t.after(s.close);
-  const { r, trip } = await deliveredTrip(s, { room: 3 });
-  await roundsCall(s, r, { items: [trip[0]], issues: ['too_loose'] });
+  await roundsCall(s, r, { item: trip[0], issues: ['too_loose'] });
   await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
   await s.call('POST', `/api/requests/${r}/confirm`, {});
   await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
-  const third = await roundsCall(s, r, { items: [trip[1]], issues: ['too_long'], chips: ['sleeves'] }); // left out of the first attempt
-  assert.equal(third.status, 200);
+  const trip2 = deriveAll(await s.events()).byId[r].onTheWay.items.map((i) => i.itemId);
+  assert.equal((await roundsCall(s, r, { item: trip[1], issues: ['too_long'] })).status, 400);         // that was the first trip: now pick from this one
+  const third = await roundsCall(s, r, { item: trip2[0], issues: ['too_long'], chips: ['sleeves'] });
   assert.equal(third.body.round, 3);
-  assert.equal((await roundsCall(s, r, { items: [trip[1]], issues: ['too_long'] })).status, 409);       // in progress again
 });
 
-test('the closing buttons can name any delivered item that was not reported, from any attempt', async (t) => {
+test('the closing buttons can name any item that was brought and not reported, from any attempt', async (t) => {
   const s = await boot();
   t.after(s.close);
   const { r, trip } = await deliveredTrip(s, { room: 3 });
-  await roundsCall(s, r, { items: [trip[0]], issues: ['too_loose'] });
+  await roundsCall(s, r, { item: trip[0], issues: ['too_loose'] });
   await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner' });
   await s.call('POST', `/api/requests/${r}/confirm`, {});
   await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
-  assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'bought_alternative', itemId: trip[0], role: 'runner' })).status, 400); // reported: not the one kept
+  assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'bought_alternative', itemId: trip[0], role: 'runner' })).status, 400); // that was the one reported
   assert.equal((await s.call('POST', `/api/requests/${r}/close`, { outcome: 'bought_alternative', itemId: trip[2], role: 'runner' })).status, 200); // left from the first attempt
   const d = deriveAll(await s.events());
   assert.deepEqual([d.byId[r].status, d.byId[r].keptItemId], ['closed', trip[2]]);
-  const m = computeMetrics(await s.events());
-  assert.deepEqual([m.closed, m.saves, m.savedAfterRetry], [1, 1, 1]);
+  assert.deepEqual([computeMetrics(await s.events()).closed, computeMetrics(await s.events()).savedAfterRetry], [1, 1]);
+});
+
+test('the runner opens the second attempt from the door: reported by the runner, accepted by them at once, with a suggestion ready', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, trip } = await deliveredTrip(s, { room: 3 });
+  const out = await roundsCall(s, r, { item: trip[0], issues: ['too_tight'], chips: ['waist'], role: 'runner' });
+  assert.equal(out.status, 200);
+  const d = deriveAll(await s.events());
+  const q = d.byId[r];
+  assert.deepEqual([q.round, q.status, q.cur.reportedBy], [2, 'accepted', 'runner']);              // no second accept to tap
+  assert.equal(q.suggestionState, 'shown');                                                         // and the suggestion is already there
+  const ev = (await s.events()).filter((e) => e.requestId === r).map((e) => `${e.type}:${e.actor}`);
+  assert.ok(ev.includes('round_opened:runner') && ev.includes('tryon_feedback:runner'));
+  assert.equal(computeMetrics(await s.events()).retried, 1);
+});
+
+test('with a team, only a joined team member of that type can open an attempt from the door; and the customer-only rule still holds for them', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const run = await addStaff(s, 'Runner 1', 'runner', ['Men|shirt']);
+  const floor = await addStaff(s, 'Floor 1', 'floor', ['Men|shirt']);
+  const r = await oxReq(s, { room: 3 });
+  await s.call('POST', `/api/requests/${r}/accept`, { role: 'runner', staffId: run.id });
+  await s.call('POST', `/api/requests/${r}/confirm`, {});
+  await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
+  const trip = deriveAll(await s.events()).byId[r].onTheWay.items.map((i) => i.itemId);
+  const body = { item: trip[0], issues: ['too_tight'], role: 'runner' };
+  assert.equal((await roundsCall(s, r, body)).status, 403);                                           // nobody joined
+  assert.equal((await roundsCall(s, r, { ...body, staffId: floor.id })).status, 400);                 // a floor associate acting as a runner
+  await s.call('POST', `/api/requests/${r}/try-on`, { result: 'fits' });                              // the customer said it fits...
+  assert.equal((await roundsCall(s, r, { item: trip[0], issues: ['too_tight'] })).status, 409);       // ...so the customer cannot go on
+  assert.equal((await roundsCall(s, r, { ...body, staffId: run.id })).status, 200);                   // but the runner, hearing otherwise at the door, can
+  const acc = (await s.events()).filter((e) => e.type === 'accepted' && e.requestId === r).pop();
+  assert.deepEqual([acc.payload.staffId, acc.payload.tier], [run.id, 'primary']);
 });
 
 test('the new attempt goes back to the person who handled the first, if they are still available', async (t) => {
@@ -1265,9 +1283,22 @@ test('the new attempt goes back to the person who handled the first, if they are
   await s.call('POST', `/api/requests/${r}/confirm`, {});
   await s.call('POST', `/api/requests/${r}/deliver`, { role: 'runner' });
   const trip = deriveAll(await s.events()).byId[r].onTheWay.items.map((i) => i.itemId);
-  await roundsCall(s, r, { items: [trip[0]], issues: ['too_loose'] });
-  const tiers = (await assignedTo(s, r)).slice(1);                                  // after the first attempt's assignment
-  assert.equal(tiers[0], `primary:${owner.id}`);                                    // the same person, even though the other is free
+  await roundsCall(s, r, { item: trip[0], issues: ['too_loose'] });
+  const tiers = (await assignedTo(s, r)).slice(1);
+  assert.equal(tiers[0], `primary:${owner.id}`);
   s.advance(21_000); s.sweep();
-  assert.equal((await assignedTo(s, r)).slice(1)[1], `secondary:${other.id}`);      // and it widens as usual
+  assert.equal((await assignedTo(s, r)).slice(1)[1], `secondary:${other.id}`);
+});
+
+test('attempts have their own clocks: it waits to be accepted again, and can escalate again', async (t) => {
+  const s = await boot();
+  t.after(s.close);
+  const { r, trip } = await deliveredTrip(s, { room: 3 });
+  s.advance(300_000); s.sweep();                                                    // idle try-on time must not count as lateness
+  assert.equal((await s.events()).filter((e) => e.type === 'escalated').length, 0);
+  await roundsCall(s, r, { item: trip[0], issues: ['too_loose'] });
+  s.advance(119_000); s.sweep();
+  assert.equal((await s.events()).filter((e) => e.type === 'escalated').length, 0);
+  s.advance(2_000); s.sweep(); s.sweep();
+  assert.deepEqual((await s.events()).filter((e) => e.type === 'escalated').map((e) => e.payload.stage), ['accept']);
 });

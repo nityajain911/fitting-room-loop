@@ -395,7 +395,7 @@ test('delivery is accept to handed over; set-off and try-on times are separate; 
   assert.equal(m.medianDeliverMs, 55_000);                       // accept -> handed over: 40 s and 70 s
   assert.equal(m.medianDispatchMs, 10_000);                      // accept -> on the way: 10 s, 10 s, 3 s
   assert.equal(m.medianTryOnMs, 150_000);                        // delivered -> closed: 120 s and 180 s
-  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1 });
+  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1, done: 0 });
   assert.equal(m.delivered, 2);
 });
 
@@ -485,7 +485,7 @@ test('the headline times come from the first attempt; later attempts are counted
   assert.deepEqual([m.total, m.closed, m.saves, m.saveRate], [1, 1, 1, 1]);   // one request, one outcome
   assert.deepEqual([m.retried, m.savedAfterRetry, m.rounds], [1, 1, 2]);
   assert.deepEqual(m.deliveredBy, { runner: 1, floor: 1 });
-  assert.deepEqual(m.tryOn, { fits: 0, notRight: 1 });
+  assert.deepEqual(m.tryOn, { fits: 0, notRight: 1, done: 0 });
   assert.equal(m.medianTryOnMs, 50_000);         // last handed over 150 s -> closed 200 s
 });
 
@@ -506,4 +506,32 @@ test('a request that is still in its second attempt is open, not closed, and cou
   twoRounds(add, 'a', false);
   const m = computeMetrics(events);
   assert.deepEqual([m.total, m.closed, m.retried, m.savedAfterRetry], [1, 0, 1, 0]);
+});
+
+// ---------- try-on results, and the later attempts ----------
+test('try-on figures keep what customers said apart from what the staff recorded', () => {
+  const { events, add } = makeLog();
+  const trip = (id, feedback, outcome) => {
+    mk(add, id, 0); add(1, id, 'accepted', { role: 'runner' });
+    add(2, id, 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' }); add(3, id, 'delivered', {}, 'runner');
+    if (feedback) add(4, id, 'tryon_feedback', { result: feedback }, 'customer');
+    if (outcome) add(5, id, 'closed', { outcome });
+  };
+  trip('a', 'fits', 'bought_alternative');
+  trip('b', null, 'bought_alternative');            // the staff recorded a purchase; the customer never tapped
+  trip('c', 'no_more', 'left');
+  trip('d', 'not_right', null);
+  const m = computeMetrics(events);
+  assert.deepEqual(m.tryOn, { fits: 1, notRight: 1, done: 1 });               // customer statements only
+  assert.equal(m.boughtAfterTryOn, 2);                                        // a and b: closed as a purchase after a hand-over
+});
+
+test('response times of the second attempt and later are reported on their own', () => {
+  const { events, add } = makeLog();
+  twoRounds(add, 'a'); twoRounds(add, 'b');
+  const m = computeMetrics(events);
+  // second attempt: opened 60 s, accepted 100 s (40 s), handed over 150 s (50 s after accept)
+  assert.deepEqual([m.laterAttempts.n, m.laterAttempts.medianAcceptMs, m.laterAttempts.medianDeliverMs], [2, 40_000, 50_000]);
+  assert.equal(m.medianDeliverMs, 30_000);                                    // the headline is still the first attempt
+  assert.deepEqual(computeMetrics([]).laterAttempts, { n: 0, medianAcceptMs: null, medianDeliverMs: null });
 });

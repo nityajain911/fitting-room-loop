@@ -161,7 +161,7 @@ test('queue items expose escalated flag for the "flagged to manager" banner', ()
 });
 
 // ---------- inventory discrepancy, declined item, assist ----------
-import { effectiveCatalogue, excludedIds } from '../shared/derive.js';
+import { effectiveCatalogue, excludedIds, suggestionExclusions } from '../shared/derive.js';
 import { buildAssistQueue } from '../shared/routing.js';
 import { CATALOGUE } from '../shared/catalogue.js';
 
@@ -702,4 +702,38 @@ test('the kept item can be any item that was delivered and not reported, from an
   add(90_000, 'r1', 'closed', { outcome: 'bought_alternative', itemId: 'OX-L-REG' }, 'runner'); // the one left from the first attempt
   assert.equal(deriveAll(events).byId.r1.keptItemId, 'OX-L-REG');
   assert.deepEqual(deriveAll(events).byId.r1.keepable.sort(), ['OX-L-REG', 'OX-XXL-REG']);
+});
+
+// ---------- the same fit in another colour ----------
+test('from the second attempt, what was tried is excluded in every colour: the same line, size and cut fits the same', () => {
+  const { events, add } = makeLog();
+  add(0, 'r1', 'created', { room: 1, skuId: 'OX-L-SLIM', issue: 'too_tight', issues: ['too_tight'], chips: [], parsed: null, method: 'none' }, 'customer');
+  add(0, 'r1', 'routed', { role: 'runner', rule: 'x' });
+  add(1, 'r1', 'accepted', { role: 'runner' }, 'runner');
+  add(2, 'r1', 'on_the_way', { room: 1, itemId: 'OX-XL-SLIM', itemLabel: 'a', items: [{ itemId: 'OX-XL-SLIM', itemLabel: 'a', forId: 'OX-L-SLIM' }] }, 'runner');
+  add(3, 'r1', 'delivered', {}, 'runner');
+  add(4, 'r1', 'inventory_discrepancy', { skuId: 'OX-S-REG', rack: 'A4' });
+  add(5, 'r1', 'round_opened', { baselineIds: ['OX-XL-SLIM'], issue: 'too_loose', issues: ['too_loose'], chips: [], styleAxes: [], parsed: null, method: 'none', by: 'customer' }, 'customer');
+  const r = deriveAll(events).byId.r1;
+  const ex = new Set(suggestionExclusions(r, CATALOGUE));
+  for (const id of ['OX-L-SLIM', 'OX-L-SLIM-NVY', 'OX-L-SLIM-LBL', 'OX-XL-SLIM', 'OX-XL-SLIM-NVY']) assert.ok(ex.has(id), `${id} is excluded`);
+  assert.ok(ex.has('OX-S-REG'));                       // missing on the rack: that SKU only
+  assert.ok(!ex.has('OX-S-REG-NVY'), 'a rack report is about one SKU, not its colours');
+  assert.ok(!ex.has('OX-M-SLIM'), 'other sizes are not excluded');
+});
+
+test('in the first attempt nothing extra is excluded', () => {
+  const { events, add } = makeLog();
+  add(0, 'r1', 'created', { room: 1, skuId: 'OX-L-SLIM', issue: 'too_tight', issues: ['too_tight'], chips: [], parsed: null, method: 'none' }, 'customer');
+  add(1, 'r1', 'accepted', { role: 'runner' }, 'runner');
+  assert.deepEqual(suggestionExclusions(deriveAll(events).byId.r1, CATALOGUE), []);
+});
+
+test('who reported an attempt is remembered', () => {
+  const { events, add } = makeLog();
+  firstRound(add);
+  add(60_000, 'r1', 'round_opened', { baselineIds: ['OX-M-REG'], issue: 'too_loose', issues: ['too_loose'], chips: [], styleAxes: [], parsed: null, method: 'none', by: 'runner' }, 'runner');
+  const r = deriveAll(events).byId.r1;
+  assert.equal(r.cur.reportedBy, 'runner');
+  assert.equal(r.pastRounds[0].reportedBy, 'customer');
 });

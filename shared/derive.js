@@ -7,12 +7,27 @@ import { skillOf } from './skills.js';
 /** An attempt as it stands (used to freeze it when the next one opens, and to read all attempts uniformly). */
 const snapshotOf = (r) => ({
   n: r.round, openedTs: r.roundStartTs, baselineIds: [...r.cur.skuIds], issue: r.cur.issue, issues: [...r.cur.issues], chips: r.cur.chips, styleAxes: r.cur.styleAxes,
-  parsed: r.cur.parsed, method: r.cur.method, acceptedTs: r.roundAcceptedTs, onTheWayTs: r.onTheWayTs, deliveredTs: r.deliveredTs, deliveredBy: r.deliveredBy,
+  parsed: r.cur.parsed, method: r.cur.method, reportedBy: r.cur.reportedBy, acceptedTs: r.roundAcceptedTs, onTheWayTs: r.onTheWayTs, deliveredTs: r.deliveredTs, deliveredBy: r.deliveredBy,
   items: (r.onTheWay?.items || []).map((i) => i.itemId), tryOn: r.tryOn, acceptedStaffId: r.acceptedStaffId,
 });
 
 /** Every attempt of a request, in order, the current one last. */
 export const roundsOf = (r) => [...r.pastRounds, snapshotOf(r)];
+
+/**
+ * Everything the next suggestion must leave out. From the second attempt on this includes what was already tried in EVERY
+ * colour: items of the same line, size and cut have the same measurements, so another colour of something that did not
+ * fit will not fit either. A rack report or a declined item is about that one SKU only.
+ */
+export function suggestionExclusions(req, catalogue = CATALOGUE) {
+  const out = new Set(excludedIds(req));
+  if (req.round > 1) {
+    const fit = (s) => `${s.line ?? `${s.category}|${s.fabric}`}|${s.size}|${s.cut}`;
+    const tried = new Set(req.triedIds.map((id) => getSku(id, catalogue)).filter(Boolean).map(fit));
+    for (const s of catalogue) if (tried.has(fit(s))) out.add(s.id);
+  }
+  return [...out];
+}
 
 /** Items the customer may still be told were kept: what is on its way now, and what was delivered and not reported. */
 function keepableOf(r) {
@@ -42,7 +57,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           // `cur` is the description of the attempt in progress, and everything about it (status, suggestion, trip, try-on)
           // is the current attempt's. Earlier attempts are kept, frozen, in `pastRounds`.
           round: 1, roundStartTs: e.ts, roundAcceptedTs: null,
-          cur: { skuIds: [p.skuId], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none' },
+          cur: { skuIds: [p.skuId], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none', reportedBy: 'customer' },
           pastRounds: [], triedIds: [p.skuId], deliveredIds: [], reportedIds: [], reportable: [], keepable: [], baseOf: {}, previousOwnerStaffId: null,
           skill: null, assignments: [], openToAll: false, acceptedStaffId: null, acceptedTier: null,
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
@@ -133,7 +148,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         r.reportedIds.push(...p.baselineIds.filter((id) => !r.reportedIds.includes(id)));
         r.previousOwnerStaffId = r.acceptedStaffId;
         r.round += 1; r.roundStartTs = e.ts; r.roundAcceptedTs = null;
-        r.cur = { skuIds: [...p.baselineIds], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none' };
+        r.cur = { skuIds: [...p.baselineIds], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none', reportedBy: p.by ?? 'customer' }; // who heard it: the customer, or the runner at the door
         r.status = 'requested'; r.acceptedStaffId = null; r.acceptedTier = null;
         r.suggestion = null; r.suggestionState = null; r.confirmedItemId = null; r.confirmedItemIds = [];
         r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.deliveredBy = null; r.tryOn = null; r.itemDeclined = null;

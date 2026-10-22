@@ -13,7 +13,7 @@ import { isOpen, ownerRole, STAGE_LABEL, effectiveCatalogue } from '/shared/deri
 import { mergeIssue } from '/shared/fitMatch.js';
 import { CATALOGUE, getSku, skuLabel, MEASURE_LABELS } from '/shared/catalogue.js';
 import { carryoverFor } from '/shared/carryover.js';
-import { STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
+import { STYLE_AXES, STYLE_AXIS_LABELS, styleKind, ISSUES, FIT_ISSUES, CHIPS_BY_KIND, toggleIssue } from '/shared/events.js';
 import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
 
 const drafts = {}; // requestId -> { fields, method, original } (AI-structured reason being edited)
@@ -57,6 +57,28 @@ handlers['a-toggle'] = (el) => {
   rerender();
 };
 handlers['a-reject'] = (el) => post(`/api/requests/${el.dataset.v}/reject`, { role: lastRole });
+// The customer says it aloud at the door ("the M Regular is still tight on my waist"): the runner opens the next attempt here.
+const door = {}; // requestId -> { open, item, issues, chips } while the runner fills it in
+const doorOf = (id) => (door[id] ||= { open: false, item: null, issues: [], chips: new Set() });
+handlers['a-door-open'] = (el) => { const d = doorOf(el.dataset.v); d.open = !d.open; rerender(); };
+handlers['a-door-item'] = (el) => { doorOf(el.dataset.id).item = el.dataset.v; rerender(); };
+handlers['a-door-issue'] = (el) => {
+  const d = doorOf(el.dataset.id);
+  d.issues = toggleIssue(d.issues, el.dataset.v);
+  if (!d.issues.some((x) => FIT_ISSUES.includes(x))) d.chips = new Set();
+  rerender();
+};
+handlers['a-door-chip'] = (el) => {
+  const d = doorOf(el.dataset.id);
+  if (d.chips.has(el.dataset.v)) d.chips.delete(el.dataset.v); else d.chips.add(el.dataset.v);
+  rerender();
+};
+handlers['a-door-send'] = async (el) => {
+  const d = doorOf(el.dataset.v);
+  if (!d.item || !d.issues.length) return toast('Pick the item and what was off');
+  const out = await post(`/api/requests/${el.dataset.v}/rounds`, withStaff({ role: lastRole, item: d.item, issues: d.issues, chips: [...d.chips] }));
+  if (out) { delete door[el.dataset.v]; toast('Attempt opened. The suggestion is ready.'); }
+};
 handlers['a-deliver'] = (el) => post(`/api/requests/${el.dataset.v}/deliver`, { role: lastRole });
 handlers['a-pull-cancel'] = (el) => post(`/api/tasks/${el.dataset.v}/cancel`, { role: lastRole });
 handlers['a-pull'] = (el) => post(`/api/requests/${el.dataset.v}/floor-pull`, { role: lastRole });
@@ -173,6 +195,10 @@ const curSku = (x) => getSku((x.cur?.skuIds ?? [x.skuId])[0]);
 const attemptPill = (x) => (x.round > 1 ? `<span class="pill accent">Attempt ${x.round}</span>` : '');
 /** The item of the customer's that a brought item was chosen for. */
 const baseFor = (r, o, s = r.suggestion) => getSku(s ? optionFor(s, o.id)?.forId : null) || getSku(r.baseOf?.[o.id]) || curSku(r);
+
+/** From the second attempt on, the earlier items are still in the room: remind the runner to swap them. */
+const collectBadge = (r) => (r.round > 1 && r.deliveredIds.length && ['accepted', 'on_the_way'].includes(r.status) && r.deliveredTs == null
+  ? `<div class="banner info">♻️ Room ${esc(r.room)} may still have ${r.deliveredIds.length} item${r.deliveredIds.length === 1 ? '' : 's'} from earlier attempts. Collect ${r.deliveredIds.length === 1 ? 'it' : 'them'} when you swap, and return ${r.deliveredIds.length === 1 ? 'it' : 'them'} to the rack.</div>` : '');
 
 function assistCard(x) {
   const what = x.kind === 'task' ? 'Floor stock pull' : `${issuesNow(x)} · ${itemNow(x)}`;
@@ -326,6 +352,7 @@ function urgentDetail(r, role) {
     <div class="head">${ringHtml(r, 64)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')} <span class="esc-tag">ESCALATED</span></div></div>
     <div class="subhead"><span>${esc(itemNow(r))} · <strong>${esc(issuesNow(r))}</strong></span></div>
     <div class="small muted">${esc(stageText(r))}${r.assistedNow ? ` · ${esc(roleLabel(r.assistedBy))} is assisting` : ''}</div>
+    ${collectBadge(r)}
     <div class="urgent-action">${action}</div>
     <details class="sec" data-sec="full:${esc(r.id)}" ${openAttr(`full:${r.id}`, false)}><summary>Full details</summary>${normalDetail(r, role, false)}</details>`;
 }
@@ -348,7 +375,8 @@ function normalDetail(r, role, withHead) {
     ${withHead ? `<div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}</div></div>
     <div class="subhead"><span>${esc(itemNow(r))}</span>${attemptPill(r)}${statusPill(r)}</div>` : ''}
     ${withHead ? escBanner(r) : ''}
-    ${r.round > 1 && withHead ? `<div class="banner info"><strong>Attempt ${r.round}.</strong> The customer tried what was brought and said ${esc(itemNow(r))} ${r.cur.skuIds.length > 1 ? 'are' : 'is'} still not right (${esc(issuesNow(r))}). Everything already brought is left out of the suggestion.</div>` : ''}
+    ${r.round > 1 && withHead ? `<div class="banner info"><strong>Attempt ${r.round}.</strong> The customer tried what was brought and said ${esc(itemNow(r))} ${r.cur.skuIds.length > 1 ? 'are' : 'is'} still not right (${esc(issuesNow(r))}).${r.cur.reportedBy !== 'customer' ? ` Reported at the door by the ${esc(roleLabel(r.cur.reportedBy).toLowerCase())}.` : ''} Everything already brought, in any colour, is left out of the suggestion.</div>` : ''}
+    ${withHead ? collectBadge(r) : ''}
     ${(() => { const c = carryover(r); return c ? `<div class="banner info">💡 <strong>Fit carryover.</strong> ${esc(c.text)} <span class="small muted">A hint from this room visit, not a profile.</span></div>` : ''; })()}
     ${r.itemDeclined ? `<div class="banner alert"><strong>Customer says: not this one.</strong> Don't bring ${esc(itemName(r.itemDeclined.itemId))}. Show the next best below.</div>` : ''}
     ${r.status === 'cancelled' ? `<div class="banner alert"><strong>Cancelled by the customer</strong> ${esc(STAGE_TEXT[r.cancelStage] || '')}. No further action is needed.</div>` : ''}
@@ -514,7 +542,8 @@ function suggestionBlock(r, sku, role, compact = false) {
     ...r.discrepancies.map((d) => `<span class="chip struck">❌ <s>${esc(itemName(d.skuId))}</s> <span>(Rack ${esc(d.rack)} — marked empty)</span></span>`),
     ...r.declinedIds.map((id) => `<span class="chip struck">❌ <s>${esc(itemName(id))}</s> <span>(declined by the customer)</span></span>`),
   ];
-  const fallbackN = (s.excluded?.length || 0) + 1;
+  // "Fallback #n": how many items were reported missing on the rack or declined before this suggestion (not what was merely tried).
+  const fallbackN = new Set([...r.discrepancies.map((d) => d.skuId), ...r.declinedIds]).size + 1;
   const isFallback = fallbackN > 1;
   const fallbackHead = isFallback
     ? `<div class="fallback-head">Fallback #${fallbackN}: ${hasItem ? `<strong>${esc(opts.map((o) => optionName(baseFor(r, o, s) || sku, o)).join(' · '))}</strong> ${rackPill(opts[0].rack, `${stockNow(opts[0].id)} left`)}` : 'no in-stock alternative'}</div>` : '';
@@ -577,9 +606,29 @@ function tripEnd(r) {
   }
   const by = r.deliveredBy ? `<div class="small muted" style="margin-top:8px">Handed to the customer by the ${esc(roleLabel(r.deliveredBy).toLowerCase())}.</div>` : '';
   const say = !r.tryOn ? `${by}<div class="small muted">Customer is trying it on…</div>`
+    : r.tryOn.result === 'no_more' ? `${by}<div class="banner info"><strong>Customer says they are all set 👋</strong> No more sizes needed. Close it with the outcome.</div>`
     : r.tryOn.result === 'fits' ? `${by}<div class="banner good"><strong>Customer says it fits 👍</strong> Close it when they decide.</div>`
       : `${by}<div class="banner info"><strong>Customer says it is still not right 🔄</strong> A follow-up request will come from the room.</div>`;
-  return `${say}${closeBlock(r)}`;
+  return `${say}${doorBlock(r)}${closeBlock(r)}`;
+}
+
+/** "Customer asked for another size": which item came closest and what was off, entered by the runner at the door. */
+function doorBlock(r) {
+  const d = doorOf(r.id);
+  const items = (r.onTheWay?.items || []).map((i) => i.itemId).filter((id) => getSku(id));
+  if (!items.length) return '';
+  if (!d.open) return `<button class="btn block" style="margin-top:10px" data-action="a-door-open" data-v="${esc(r.id)}">🔄 Customer asked for another size</button>`;
+  const name = (id) => { const b = getSku(r.baseOf?.[id]) || getSku(r.skuId); return b ? tripItemName(b, getSku(id)) : itemName(id); };
+  const kind = styleKind(getSku(d.item || items[0]).category);
+  const optBtn = (action, v, label, on) => `<button type="button" class="opt ${on ? 'on' : ''}" data-action="${action}" data-id="${esc(r.id)}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
+  const chips = FIT_ISSUES.some((k) => d.issues.includes(k)) ? `<div class="small muted" style="margin-top:8px">Where? (optional)</div><div class="opts">${CHIPS_BY_KIND[kind === 'trousers' ? 'trousers' : 'top'].map((c) => optBtn('a-door-chip', c, c.charAt(0).toUpperCase() + c.slice(1), d.chips.has(c))).join('')}</div>` : '';
+  return `<div class="card stack" style="margin-top:10px">
+    <strong>Which item came closest?</strong>
+    <div class="opts">${items.map((id) => optBtn('a-door-item', id, name(id), d.item === id)).join('')}</div>
+    ${d.item ? `<strong>What was still off?</strong><div class="opts">${Object.entries(ISSUES).map(([k, v]) => optBtn('a-door-issue', k, v, d.issues.includes(k))).join('')}</div>${chips}` : ''}
+    <button class="btn primary block" data-action="a-door-send" data-v="${esc(r.id)}" ${d.item && d.issues.length ? '' : 'disabled'}>Open the next attempt</button>
+    <button class="link-btn" data-action="a-door-open" data-v="${esc(r.id)}">Cancel</button>
+  </div>`;
 }
 
 function closeBlock(r) {

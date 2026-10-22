@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CATALOGUE, getSku } from '../shared/catalogue.js';
 import { mergeIssue, fitMatch } from '../shared/fitMatch.js';
-import { normaliseIssues, issuesLabel } from '../shared/events.js';
+import { normaliseIssues, issuesLabel, toggleIssue } from '../shared/events.js';
 import { deriveAll } from '../shared/derive.js';
 import { computeMetrics } from '../shared/metrics.js';
 import { makeConfig } from '../shared/config.js';
@@ -117,4 +117,14 @@ test('metrics: a request with two issues counts in both of its areas on the heat
   assert.equal(row.total, 2);
   const top = m.bySku[0].issueCounts.map((c) => `${c.issue}|${c.area}`).sort();
   assert.deepEqual(top, ['too_short|sleeves', 'too_tight|chest']);
+});
+
+test('toggleIssue: fit issues add up to two, the opposite swaps in, and anything else stands alone', () => {
+  assert.deepEqual(toggleIssue([], 'too_tight'), ['too_tight']);
+  assert.deepEqual(toggleIssue(['too_tight'], 'too_long'), ['too_tight', 'too_long']);
+  assert.deepEqual(toggleIssue(['too_tight', 'too_long'], 'too_tight'), ['too_long']);          // tapping again removes it
+  assert.deepEqual(toggleIssue(['too_tight', 'too_long'], 'too_loose'), ['too_long', 'too_loose']); // the opposite replaces
+  assert.deepEqual(toggleIssue(['too_tight'], 'another_size'), ['another_size']);
+  assert.deepEqual(toggleIssue(['another_size'], 'too_short'), ['too_short']);
+  assert.deepEqual(toggleIssue(['too_tight'], 'check_stock'), ['check_stock']);
 });
