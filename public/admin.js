@@ -84,7 +84,7 @@ export function render() {
 function settingsNote(c) {
   return `<h2>Matching rules</h2>
     <div class="settings">
-      closeness limits (a bigger change is not offered): tops chest ${c?.fitLimits?.top.chest ?? '–'} · waist ${c?.fitLimits?.top.waist ?? '–'} · length ${c?.fitLimits?.top.length ?? '–'} cm, trousers waist ${c?.fitLimits?.trousers.waist ?? '–'} · inseam ${c?.fitLimits?.trousers.inseam ?? '–'} cm, at most ${c?.maxSizeSteps ?? '–'} sizes away ·
+      price band ±${c?.maxPriceDelta != null ? `₹${c.maxPriceDelta.toLocaleString('en-IN')}` : '–'} (a design further away in price is offered only when nothing nearer is in stock) · closeness limits (a bigger change is not offered): tops chest ${c?.fitLimits?.top.chest ?? '–'} · waist ${c?.fitLimits?.top.waist ?? '–'} · length ${c?.fitLimits?.top.length ?? '–'} cm, trousers waist ${c?.fitLimits?.trousers.waist ?? '–'} · inseam ${c?.fitLimits?.trousers.inseam ?? '–'} cm, at most ${c?.maxSizeSteps ?? '–'} sizes away ·
       alteration offered: ${c ? (c.alterationOffered ? 'yes' : 'no') : '–'} · min improvement ${c?.minImprovementCm ?? '–'} cm ·
       small sample below n=${c?.smallSampleN ?? '–'} ·
       signals need ≥${c?.signalMinN ?? '–'} requests and ≥${c ? Math.round(c.signalMinShare * 100) : '–'}% share, rack recount after ${c?.signalMinMisses ?? '–'}+ report, high demand at ${c?.signalMinPulls ?? '–'}+ replacements · bring up to ${c?.bringCount ?? '–'} items per trip ·

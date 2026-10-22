@@ -34,7 +34,7 @@ export function bulletScale(valueMs, cfg) {
   };
 }
 
-const FUNNEL_ORDER = ['bought_alternative', 'bought_original', 'cross_store_order', 'saved_for_later', 'left'];
+export const FUNNEL_ORDER = ['bought_alternative', 'bought_original', 'cross_store_order', 'saved_for_later', 'left'];
 
 /**
  * The fate of closed requests as a 100% stacked bar. It is over *closed* requests so that the first three segments
@@ -46,6 +46,17 @@ export function outcomeFunnel(metrics) {
     ? FUNNEL_ORDER.map((key) => ({ key, count: metrics.outcomeMix[key] || 0, pct: ((metrics.outcomeMix[key] || 0) / total) * 100 })).filter((s) => s.count > 0)
     : [];
   return { total, segments, cancelled: metrics.cancelled || 0 };
+}
+
+/**
+ * What a heatmap cell says: a dash when nothing was reported, else the count and only the directions that exist
+ * ("1 tight", "1 tight · 1 loose"). "More" means they needed more room or length; for a length area that reads short.
+ */
+export function heatCellText({ more, less }, area) {
+  const n = more + less;
+  if (!n) return { main: '—', sub: '' };
+  const [w1, w2] = area === 'length' ? ['short', 'long'] : ['tight', 'loose'];
+  return { main: String(n), sub: [more ? `${more} ${w1}` : '', less ? `${less} ${w2}` : ''].filter(Boolean).join(' · ') };
 }
 
 /** Aisle letter and number of a rack code like "A5". */

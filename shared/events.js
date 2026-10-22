@@ -80,7 +80,7 @@ export const REASON_TAGS = [
   'alteration_not_wanted', 'just_browsing', 'will_return', 'stock_unavailable', 'other_unknown',
 ];
 export const REASON_LABELS = {
-  time_constraint: 'Time constraint', price: 'Price', style_not_liked: 'Style not liked',
+  time_constraint: 'Time constraint', price: 'Price difference', style_not_liked: 'Style not liked',
   size_unavailable: 'Size unavailable', colour_unavailable: 'Colour unavailable',
   alteration_not_wanted: 'Alteration not wanted', just_browsing: 'Just browsing',
   will_return: 'Will return', stock_unavailable: 'Stock unavailable', other_unknown: 'Other / unknown',
@@ -90,7 +90,7 @@ export const EVIDENCE_TYPES = ['customer-stated', 'associate-observed', 'system-
 // One-tap reasons for the associate. They map straight onto the fixed reason tags, so no AI call is needed.
 export const QUICK_REASONS = [
   { key: 'time', label: 'Short on time', tag: 'time_constraint', evidence: 'customer-stated', summary: 'Customer was short on time' },
-  { key: 'price', label: 'Price concern', tag: 'price', evidence: 'customer-stated', summary: 'Customer was concerned about the price' },
+  { key: 'price', label: 'Price difference', tag: 'price', evidence: 'customer-stated', summary: 'Customer was put off by the price difference' },
   { key: 'style', label: 'Style not liked', tag: 'style_not_liked', evidence: 'customer-stated', summary: 'Customer did not like the style' },
   { key: 'return', label: 'Will come back', tag: 'will_return', evidence: 'customer-stated', summary: 'Customer plans to come back later' },
   { key: 'size', label: 'Size not available', tag: 'size_unavailable', evidence: 'system-observed', summary: 'The size needed was not available' },

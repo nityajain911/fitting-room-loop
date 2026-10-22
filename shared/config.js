@@ -17,6 +17,7 @@ export const DEFAULTS = {
   // issue it would make worse. The sample catalogue moves a top about 5 cm in the chest per size.
   fitLimits: { top: { chest: 10, waist: 12, shoulder: 4, sleeve: 6, length: 8 }, trousers: { waist: 6, hip: 8, inseam: 6 } },
   maxSizeSteps: 2, // "another size" and stock checks look at most this many sizes either side
+  maxPriceDelta: 500, // rupees: a suggested design stays within this much of the price of what the customer has, unless nothing in stock does
   bringCount: 3, // how many best options a runner brings in one trip (1 to 5)
   primaryWaitSeconds: 20, // a request is with its primary person this long, then a secondary person is added
   secondaryWaitSeconds: 20, // ...and with the secondary this long, then it opens to everyone
@@ -47,6 +48,7 @@ export function makeConfig(env = {}) {
     signalMinPulls: num(env.SIGNAL_MIN_PULLS, DEFAULTS.signalMinPulls),
     fitLimits: DEFAULTS.fitLimits,
     maxSizeSteps: Math.max(1, Math.floor(num(env.MAX_SIZE_STEPS, DEFAULTS.maxSizeSteps))),
+    maxPriceDelta: num(env.MAX_PRICE_DELTA, DEFAULTS.maxPriceDelta),
     bringCount: Math.min(5, Math.max(1, Math.floor(num(env.BRING_COUNT, DEFAULTS.bringCount)))),
     primaryWaitSeconds: num(env.PRIMARY_WAIT_SECONDS, DEFAULTS.primaryWaitSeconds),
     secondaryWaitSeconds: num(env.SECONDARY_WAIT_SECONDS, DEFAULTS.secondaryWaitSeconds),

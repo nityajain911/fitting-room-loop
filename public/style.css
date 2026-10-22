@@ -373,3 +373,9 @@ body[data-view="manager"] .view, body[data-view="admin"] .view, body[data-view="
 .price { font-weight: 600; color: var(--muted); font-size: .9em; white-space: nowrap; }
 .bline { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 .cmp th { vertical-align: bottom; }
+.cta-summary { font-size: 14px; text-align: center; padding: 0 4px 6px; font-weight: 600; }
+.hcell { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; height: 40px; }
+.hcell small { font-size: 9px; font-weight: 600; opacity: .85; white-space: nowrap; }
+.hcell b { font-size: 14px; }
+.hcell.empty { color: var(--muted); font-weight: 400; }
+.flegend .zero { opacity: .55; }

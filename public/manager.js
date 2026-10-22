@@ -4,7 +4,8 @@
 import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel, now, openAttr } from './core.js';
 import { computeMetrics } from '/shared/metrics.js';
 import { EVIDENCE_TYPES, FITTING_ROOMS } from '/shared/events.js';
-import { bulletScale, outcomeFunnel } from '/shared/visuals.js';
+import { bulletScale, outcomeFunnel, heatCellText, FUNNEL_ORDER } from '/shared/visuals.js';
+import { rupees } from '/shared/pricing.js';
 import { stageLimits, STAGE_LABEL, isOpen } from '/shared/derive.js';
 import { RANGES, rangeStart, eventsSince, groupSignals } from '/shared/dashboard.js';
 import { liveFloor } from '/shared/live.js';
@@ -59,9 +60,9 @@ export function render() {
     ${escalationCards()}
 
     <div class="north">
-      <div class="tile">${title('save', 'Issue save rate', 'Fitting-room proxy, not store conversion: (bought original + bought alternative + cross-store order) ÷ closed requests. Saved for later and cancelled requests are not counted as saves.')}
+      <div class="tile">${title('save', 'Issue save rate', 'Fitting-room proxy, not store conversion: (bought original + bought alternative + cross-store order) ÷ closed requests. Saved for later and cancelled requests are not counted as saves. The rupee figure adds the sample price of what those requests came to (what was bought, or for a cross-store order what the customer wanted).')}
         <div class="num">${pct(m.saveRate)}</div>
-        <div class="cap">${m.saves} of ${m.closed} closed</div></div>
+        <div class="cap">${m.saves} of ${m.closed} closed${m.saves ? ` · ${rupees(m.savedValue)} saved` : ''}</div></div>
       <div class="tile">${title('sla', 'SLA health', `Median time to accept a request, and median time from accept to the item being on its way, each against its own warning and escalation marks (accept: ${accept.warnSeconds}s / ${accept.escalateSeconds}s, deliver: ${deliver.warnSeconds}s / ${deliver.escalateSeconds}s). The escalation times are prototype settings, set on the Admin page.`)}
         ${bullet('Accept', m.medianAcceptMs, accept, 'Pending first accept')}${bullet('Deliver', m.medianDeliverMs, deliver, 'Pending first delivery')}</div>
       <div class="tile">${title('rack', 'Not on rack', 'Times an associate found a suggested item missing from its rack, meaning the stock record was wrong.')}
@@ -139,7 +140,7 @@ function funnel(m) {
   if (!f.total) return `<div class="card muted">No closed requests yet.${f.cancelled ? ` ${f.cancelled} cancelled.` : ''}</div>`;
   return `<div class="card">
     <div class="funnel" role="img" aria-label="Outcomes of ${f.total} closed requests">${f.segments.map((s) => `<i style="width:${s.pct}%;background:${FUNNEL_COLOURS[s.key]}" title="${esc(outcomeLabel(s.key))}: ${s.count}"></i>`).join('')}</div>
-    <div class="flegend">${f.segments.map((s) => `<span><i style="background:${FUNNEL_COLOURS[s.key]}"></i>${esc(outcomeLabel(s.key))} <strong>${s.count}</strong> (${Math.round(s.pct)}%)</span>`).join('')}</div>
+    <div class="flegend">${FUNNEL_ORDER.map((k) => { const n = m.outcomeMix[k] || 0; return `<span class="${n ? '' : 'zero'}"><i style="background:${FUNNEL_COLOURS[k]}"></i>${esc(outcomeLabel(k))} <strong>${n}</strong> · ${rupees(m.outcomeValue[k] || 0)}${n ? ` (${Math.round((n / f.total) * 100)}%)` : ''}</span>`; }).join('')}</div>
     ${f.cancelled ? `<div class="small muted" style="margin-top:6px">+ ${f.cancelled} cancelled by the customer (not part of the bar)</div>` : ''}
   </div>`;
 }
@@ -154,18 +155,19 @@ function heatmap(m, cfg) {
   const alpha = (n) => (0.18 + 0.82 * (n / h.max)).toFixed(2);
   const CORAL = '224, 90, 67';
   const TEAL = '20, 150, 150';
-  const cell = (c) => {
+  const cell = (c, area) => {
     const n = c.more + c.less;
-    if (!n) return '<div class="hcell empty"></div>';
+    if (!n) return `<div class="hcell empty">${heatCellText(c, area).main}</div>`;
+    const t = heatCellText(c, area);
     const bg = c.more && c.less
       ? `linear-gradient(to bottom, rgba(${CORAL}, ${alpha(c.more)}) 50%, rgba(${TEAL}, ${alpha(c.less)}) 50%)`
       : `rgba(${c.more ? CORAL : TEAL}, ${alpha(n)})`;
-    return `<div class="hcell" style="background:${bg}" title="Needed more: ${c.more} · needed less: ${c.less}">${n}</div>`;
+    return `<div class="hcell" style="background:${bg}" title="Needed more: ${c.more} · needed less: ${c.less}"><b>${t.main}</b><small>${esc(t.sub)}</small></div>`;
   };
   const minN = cfg.smallSampleN ?? 5;
-  return `<div class="card"><div class="heat" style="grid-template-columns: minmax(104px, 1fr) repeat(${cols.length}, minmax(38px, 54px))">
+  return `<div class="card"><div class="heat" style="grid-template-columns: minmax(104px, 1fr) repeat(${cols.length}, minmax(48px, 64px))">
       <div></div>${cols.map((a) => `<div class="hhead" title="${a === 'general' ? 'The customer named the issue but no body area' : esc(cap(a))}">${esc(AREA_SHORT[a] || cap(a))}</div>`).join('')}
-      ${h.rows.map((r) => `<div class="hrow">${esc(r.label)}<div class="muted small" style="font-weight:400">${r.total} report${r.total === 1 ? '' : 's'}${r.total < minN ? ' · small sample' : ''}</div></div>${cols.map((a) => cell(r.cells[a])).join('')}`).join('')}
+      ${h.rows.map((r) => `<div class="hrow">${esc(r.label)}<div class="muted small" style="font-weight:400">${r.total} report${r.total === 1 ? '' : 's'}${r.total < minN ? ' · small sample' : ''}</div></div>${cols.map((a) => cell(r.cells[a], a)).join('')}`).join('')}
     </div>
     <div class="hlegend"><span><i style="background:rgb(${CORAL})"></i>needed more room or length</span><span><i style="background:rgb(${TEAL})"></i>needed less</span></div>
   </div>`;

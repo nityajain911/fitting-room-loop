@@ -13,6 +13,7 @@ import { isOpen, ownerRole, STAGE_LABEL, effectiveCatalogue } from '/shared/deri
 import { mergeIssue } from '/shared/fitMatch.js';
 import { CATALOGUE, getSku, priceLabel, MEASURE_LABELS } from '/shared/catalogue.js';
 import { carryoverFor } from '/shared/carryover.js';
+import { priceWithDelta, declinedPricier } from '/shared/pricing.js';
 import { STYLE_AXIS_LABELS, styleKind, ISSUES, FIT_ISSUES, CHIPS_BY_KIND, toggleIssue } from '/shared/events.js';
 import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
 
@@ -233,6 +234,10 @@ const curSku = (x) => getSku((x.cur?.skuIds ?? [x.skuId])[0]);
 const attemptPill = (x) => (x.round > 1 ? `<span class="pill accent">Attempt ${x.round}</span>` : '');
 /** The item of the customer's that a brought item was chosen for. */
 const baseFor = (r, o, s = r.suggestion) => getSku(s ? optionFor(s, o.id)?.forId : null) || getSku(r.baseOf?.[o.id]) || curSku(r);
+/** An item's price beside what the customer has on, and a note when it is outside the usual price band. */
+const priceNote = (r, o, s = r.suggestion) => `<span class="price">${esc(priceWithDelta(o, baseFor(r, o, s)))}</span>${s && optionFor(s, o.id)?.outsideBand ? ' <span class="pill warn">Outside usual price range</span>' : ''}`;
+/** The customer's own items with their prices, for the header. */
+const itemPriced = (x) => (x.cur?.skuIds ?? [x.skuId]).map((id) => `${itemName(id)}${getSku(id)?.price ? ` · ${priceLabel(getSku(id))}` : ''}`).join(' + ');
 
 
 function assistCard(x) {
@@ -407,7 +412,7 @@ function requestDetail(r, role) {
   const n = r.deliveredIds.length;
   return `
     <div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}${isOpen(r) && r.escalated ? ' <span class="esc-tag">ESCALATED</span>' : ''}</div></div>
-    <div class="summary"><strong>${esc(issuesNow(r))}</strong> · ${esc(itemNow(r))} ${attemptPill(r)}${info.conflicts.length ? ' <span class="pill warn">⚠ Check</span>' : ''}${statusPill(r)}</div>
+    <div class="summary"><strong>${esc(issuesNow(r))}</strong> · ${esc(itemPriced(r))} ${attemptPill(r)}${info.conflicts.length ? ' <span class="pill warn">⚠ Check</span>' : ''}${statusPill(r)}</div>
     ${p ? `<div class="small muted">${r.cur.method === 'rule_fallback' ? '⚙' : '✨'} “${esc(p.summary_en)}”</div>` : ''}
     ${escBanner(r)}
     ${r.round > 1 ? `<div class="banner info">Still not right after attempt ${r.round - 1}. Earlier items are left out.</div>` : ''}
@@ -522,7 +527,7 @@ function comparisons(r, s, opts, sku) {
 function comparisonTable(sku, opts, s) {
   const roles = Object.fromEntries((s.diffs || []).map((d) => [d.measure, d.role]));
   const keys = Object.keys(sku.m).filter((k) => opts.some((o) => k in o.m));
-  return `<table class="cmp"><thead><tr><th>cm</th><th>Now<br><span class="muted" style="font-weight:400">${esc(priceLabel(sku))}</span></th>${opts.map((o) => `<th>${esc(`${o.size} ${o.cut}`)}${o.colour !== sku.colour ? `<br><span class="muted" style="font-weight:400">${esc(o.colour)}</span>` : ''}<br><span class="muted" style="font-weight:400">${esc(priceLabel(o))}</span></th>`).join('')}</tr></thead><tbody>
+  return `<table class="cmp"><thead><tr><th>cm</th><th>Now<br><span class="muted" style="font-weight:400">${esc(priceLabel(sku))}</span></th>${opts.map((o) => `<th>${esc(`${o.size} ${o.cut}`)}${o.colour !== sku.colour ? `<br><span class="muted" style="font-weight:400">${esc(o.colour)}</span>` : ''}<br><span class="muted" style="font-weight:400">${esc(priceWithDelta(o, sku))}</span></th>`).join('')}</tr></thead><tbody>
     ${keys.map((k) => `<tr class="${roles[k] === 'primary' || roles[k] === 'secondary' ? 'hl' : ''}"><td>${esc(MEASURE_LABELS[k] || k)}${roles[k] === 'primary' ? '<span class="tag">MAIN</span>' : roles[k] === 'secondary' ? '<span class="tag">ALSO</span>' : ''}</td>
       <td>${sku.m[k]}</td>${opts.map((o) => `<td>${o.m[k] ?? '–'}</td>`).join('')}</tr>`).join('')}
   </tbody></table>
@@ -556,7 +561,7 @@ function suggestionBlock(r, sku, role, compact = false) {
       const why = choiceSummary(optionFor(s, o.id));
       return `<div class="optrow ${canAct && !sel.has(o.id) ? 'off' : ''}">
         ${canAct ? `<input type="checkbox" class="optbox" aria-label="Bring ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-toggle" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${sel.has(o.id) ? 'checked' : ''}>` : ''}
-        <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> <span class="price">${esc(priceLabel(o))}</span></span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
+        <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
           ${reported(o.id) ? `<div class="small muted">${reported(o.id)} reported missing</div>` : ''}
           ${why && opts.length > 1 ? `<div class="small">${esc(cap1(why))}</div>` : ''}</div>
         ${isOpenReq && !r.itemDeclined && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}
@@ -597,7 +602,7 @@ function suggestionBlock(r, sku, role, compact = false) {
     const key = `sugg:${r.id}`;
     return `<h2>${r.deliveredTs != null ? 'Brought' : 'On the way'}</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}
-      ${trip.map((o) => `<div class="optrow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> <span class="price">${esc(priceLabel(o))}</span></span>${rackPill(o.rack)}</div>
+      ${trip.map((o) => `<div class="optrow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack)}</div>
 </div>
         <button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button></div>`).join('')}
       ${struckHtml}
@@ -675,7 +680,7 @@ function reasonBlock(r) {
     ${last ? `<div class="banner good">Recorded: <strong>${esc(reasonLabel(last.reason_tag))}</strong> · ${esc(last.evidence_type)}<br>
       <span class="small">“${esc(last.summary_en)}” · ${esc(methodLabel(last.method))}${last.edited ? ' · edited by associate' : ''}</span></div>` : ''}
     <div class="small muted">One tap</div>
-    <div class="opts">${QUICK_REASONS.map((q) => `<button class="opt ${last?.method === 'quick_pick' && last.reason_tag === q.tag ? 'on' : ''}" data-action="a-quick-reason" data-v="${esc(r.id)}" data-key="${q.key}">${esc(q.label)}</button>`).join('')}</div>
+    <div class="opts">${QUICK_REASONS.filter((q) => q.key !== 'price' || declinedPricier(r, getSku) || last?.reason_tag === 'price').map((q) => `<button class="opt ${last?.method === 'quick_pick' && last.reason_tag === q.tag ? 'on' : ''}" data-action="a-quick-reason" data-v="${esc(r.id)}" data-key="${q.key}">${esc(q.label)}</button>`).join('')}</div>
     <label class="field" for="reason-text">Or type it in any language</label>
     <textarea id="reason-text" data-keep="reason-text" maxlength="500" placeholder="e.g. Customer travelling tonight, cannot wait for alteration"></textarea>
     <button class="btn" data-action="a-reason-parse" data-v="${esc(r.id)}">${aiMode ? 'Structure with AI' : 'Structure (rule-based fallback — not AI)'}</button>

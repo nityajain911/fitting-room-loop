@@ -10,6 +10,7 @@ import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, style
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
 import { tripItemName, waitPhrase } from '/shared/visuals.js';
+import { priceWithDelta } from '/shared/pricing.js';
 import { typicalAcceptMs } from '/shared/metrics.js';
 
 // Each tablet lives in one fitting room, and the customer is never asked which. The prototype runs as Room 1 and does not
@@ -294,8 +295,9 @@ function formView() {
 
     ${leaveLink(form.room)}
     <div class="cta-wrap">
+      ${ready && sku ? `<div class="cta-summary">${esc(prefix(sku))}${esc(sku.colour)} ${esc(sku.name)}${sku.styleName ? ` (${esc(sku.styleName)})` : ''} · ${esc(sku.size)} ${esc(sku.cut)}${sku.price ? ` · ${esc(priceLabel(sku))}` : ''}</div>` : ''}
       <button class="btn primary block" data-action="c-submit" ${ready ? '' : 'disabled'}>${form.busy ? 'Sending…'
-        : ready ? `Send request: ${esc(prefix(sku))}${esc(sku.colour)} ${esc(sku.name)} ${esc(sku.size)} ${esc(sku.cut)}` : `Select ${next} to continue`}</button>
+        : ready ? 'Send request' : `Select ${next} to continue`}</button>
     </div>`;
 }
 
@@ -339,7 +341,7 @@ function incoming(r) {
   const item = ({ sku, id }, i) => {
     const base = getSku(r.baseOf?.[id]) || getSku(r.skuId);
     const differs = base && (sku.styleName !== base.styleName || sku.colour !== base.colour); // the header already names the garment
-    return `<div class="bitem"><div class="bline"><strong>${esc(broughtName(r, id))}</strong><span class="price">${esc(priceLabel(sku))}</span></div>
+    return `<div class="bitem"><div class="bline"><strong>${esc(broughtName(r, id))}</strong><span class="price">${esc(priceWithDelta(sku, getSku(r.baseOf?.[id]) || getSku(r.skuId)))}</span></div>
       ${differs ? `<div class="small muted">${esc(itemName(id))}</div>` : ''}${whys[i] && !(many && same) ? `<div class="small">Chosen for ${esc(whys[i])}</div>` : ''}</div>`;
   };
   return `<div class="incoming bring">

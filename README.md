@@ -58,7 +58,7 @@ The AI can only fill the structured fields (area, issue, summary, evidence type,
 
 **Lock a device to one role.** Add `mode=` to a link once and the device remembers it: `/#customer?room=3&mode=customer` (a room tablet: no tabs, no Admin link, screen kept awake), `/#associate?mode=staff` (a runner or floor phone: only the queue, beeps and buzzes for new work and escalations, 🔔 turns the sound off), `/#manager?mode=manager`. `/#customer?mode=demo` unlocks it again. The Admin page lists every link.
 
-**Prices.** Each recommended article shows its sample price (₹) for the runner and on the customer's tracker. Price is shown, not used: matching and routing ignore it.
+**Prices.** Every article has a sample price (₹). The customer sees the price of what they asked about before sending, and of each recommended article with its difference ("₹5,299 (+₹300)") on the tracker; the runner sees the same on each "Bring" row, and the original's price in the header. The engine keeps a suggested design within ±₹500 of the original's price (a prototype setting) unless nothing in stock is, in which case the item is marked "Outside usual price range"; among equally good fits the closer price comes first. Routing never uses price. The Manager shows the rupee value of converted requests ("₹ saved") and of every outcome, from the sample prices.
 
 **Manager and Admin.** The Manager page opens with the floor right now (waiting, longest wait, every fitting room, who holds what), then the figures for the range you pick (Last hour, Today, 7 days, All), in two columns on a desk. Signals are grouped by kind. Admin has tabs (Team, Timing, Devices, Data, Demo); Timing shows what happens to an unanswered request in plain words.
 

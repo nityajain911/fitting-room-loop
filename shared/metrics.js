@@ -20,6 +20,9 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
   const restockTasks = allTasks.filter((t) => t.taskType === 'restock'); // dispatched from the Manager
 
   const closedReqs = requests.filter((r) => r.status === 'closed');
+  // What each closed request came to, in sample rupees: what was bought when something was, otherwise what the customer was after.
+  const priceOf = (id) => getSku(id, catalogue)?.price ?? 0;
+  const valueOf = (r) => (r.outcome === 'bought_alternative' ? priceOf(r.keptItemId ?? r.skuId) : priceOf(r.skuId));
   const rounds = new Map(requests.map((r) => [r.id, roundsOf(r)])); // every attempt of every request, in order
   const saves = closedReqs.filter((r) => SAVE_OUTCOMES.includes(r.outcome)).length;
   const deferred = closedReqs.filter((r) => r.outcome === 'saved_for_later').length;
@@ -125,6 +128,8 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     escalationsByStage: { accept: escalationLog.filter((e) => e.stage === 'accept').length, deliver: escalationLog.filter((e) => e.stage === 'deliver').length },
     openEscalations: [...requests, ...tasks].filter((x) => isOpen(x) && x.escalated).map((x) => x.id),
     outcomeMix,
+    outcomeValue: Object.fromEntries(Object.keys(OUTCOMES).map((k) => [k, closedReqs.filter((r) => r.outcome === k).reduce((n, r) => n + valueOf(r), 0)])),
+    savedValue: closedReqs.filter((r) => SAVE_OUTCOMES.includes(r.outcome)).reduce((n, r) => n + valueOf(r), 0),
     confirmed,
     rejected,
     suggestionAcceptance: ratio(confirmed, confirmed + rejected),

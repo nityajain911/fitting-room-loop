@@ -220,6 +220,10 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
   const K = Math.min(5, Math.max(1, Math.floor(config.bringCount ?? 3)));
   const out = { ...base(sku, issueInfo), excluded: [...excludeIds] };
   const stocked = catalogue.filter((s) => s.stock > 0 && s.id !== sku.id && sameFamily(s, sku) && !excludeIds.includes(s.id));
+  // Price: a suggestion stays close in price to what the customer has (a band, relaxed only when nothing in stock is inside it),
+  // and among equally good fits the closer price comes first. Articles without a price are not held to the band.
+  const priceCap = config.maxPriceDelta ?? DEFAULTS.maxPriceDelta;
+  const gapOf = (s) => (Number.isFinite(s.price) && Number.isFinite(sku.price) ? Math.abs(s.price - sku.price) : 0);
 
   if (issueInfo.issue === 'another_size') {
     const idx = sizeIndex(sku, catalogue);
@@ -258,10 +262,17 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
     }).filter((c) => c.diff.length);
     const meetsAll = (c) => (asked.length ? asked.every((a) => c.diff.includes(a)) : true);
     const rank = (a, b) => (asked.length ? a.extra.length - b.extra.length : a.diff.length - b.diff.length)
-      || sameColour(b.s, sku) - sameColour(a.s, sku) || fitGap(a.s, sku) - fitGap(b.s, sku) || (a.s.id < b.s.id ? -1 : 1);
-    const tier1 = designs.filter((c) => c.s.cut === sku.cut && meetsAll(c)).sort(rank);
-    const tier2 = designs.filter((c) => c.s.cut !== sku.cut && meetsAll(c)).sort(rank);
-    const tier3 = asked.length ? designs.filter((c) => c.s.cut === sku.cut && !meetsAll(c) && c.hit.length).sort((a, b) => b.hit.length - a.hit.length || rank(a, b)) : [];
+      || gapOf(a.s) - gapOf(b.s) || sameColour(b.s, sku) - sameColour(a.s, sku) || fitGap(a.s, sku) - fitGap(b.s, sku) || (a.s.id < b.s.id ? -1 : 1);
+    const rankedFrom = (list) => {
+      const tier1 = list.filter((c) => c.s.cut === sku.cut && meetsAll(c)).sort(rank);
+      const tier2 = list.filter((c) => c.s.cut !== sku.cut && meetsAll(c)).sort(rank);
+      const tier3 = asked.length ? list.filter((c) => c.s.cut === sku.cut && !meetsAll(c) && c.hit.length).sort((a, b) => b.hit.length - a.hit.length || rank(a, b)) : [];
+      return distinctBy([...tier1, ...tier2, ...tier3], (c) => lineOf(c.s), K); // one per design, best tier first
+    };
+    // Inside the price band first; only when that leaves nothing is the band relaxed, and what is offered then says so.
+    let ranked = rankedFrom(designs.filter((c) => gapOf(c.s) <= priceCap));
+    const relaxed = !ranked.length;
+    if (relaxed) ranked = rankedFrom(designs);
     const styleOption = (pick) => {
       const alt = pick.s;
       const changed = pick.diff.map((axis) => ({ axis, label: STYLE_AXIS_LABELS[axis], from: attrsOf(sku)[axis], to: attrsOf(alt)[axis] }));
@@ -279,9 +290,9 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
         itemId: alt.id,
         change: { type: 'design', from: styleLabel(sku), to: styleLabel(alt), alsoCut, axes: pick.diff, changed, requested: asked, unmet },
         reason,
+        ...(relaxed && gapOf(alt) > priceCap ? { outsideBand: true } : {}),
       };
     };
-    const ranked = distinctBy([...tier1, ...tier2, ...tier3], (c) => lineOf(c.s), K); // one per design, best tier first
     if (ranked.length) {
       const options = ranked.map(styleOption);
       return { ...out, kind: 'alternative_style', ...options[0], options };
@@ -359,11 +370,15 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
       const others = Object.keys(sku.m).filter((k) => k in s.m && k !== primary.measure && k !== secondary?.measure);
       const otherDiff = others.reduce((sum, k) => sum + Math.abs(s.m[k] - sku.m[k]), 0);
       const jump = primary.measure in s.m && primary.measure in sku.m ? Math.abs(s.m[primary.measure] - sku.m[primary.measure]) : Infinity;
-      return { s, fixesPrimary, fixesSecondary, otherDiff, jump };
+      return { s, fixesPrimary, fixesSecondary, otherDiff, jump, gap: gapOf(s) };
     });
-  const bothFixed = scored.filter((c) => c.fixesPrimary && c.fixesSecondary);
-  const candidates = (two && bothFixed.length ? bothFixed : scored)
-    .sort((a, b) => (b.fixesPrimary + b.fixesSecondary) - (a.fixesPrimary + a.fixesSecondary) || (b.fixesPrimary - a.fixesPrimary)
+  // Order of priority: fixes the main issue, inside the price band, the closer price, then the second issue and the rest.
+  const inBand = scored.filter((c) => c.gap <= priceCap);
+  const relaxedBand = !inBand.length && scored.length > 0;
+  const pool = relaxedBand ? scored : inBand;
+  const bothFixed = pool.filter((c) => c.fixesPrimary && c.fixesSecondary);
+  const candidates = (two && bothFixed.length ? bothFixed : pool)
+    .sort((a, b) => (b.fixesPrimary - a.fixesPrimary) || a.gap - b.gap || (b.fixesSecondary - a.fixesSecondary)
       || a.otherDiff - b.otherDiff || a.jump - b.jump
       || sameColour(b.s, sku) - sameColour(a.s, sku) || (a.s.id < b.s.id ? -1 : 1));
 
@@ -377,7 +392,7 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
       let reason = `${c.s.cut} ${c.s.size}${colourNote(c.s, sku)} has ${parts.join(' and ')} than ${sku.cut} ${sku.size}`;
       if (secondary && !c.fixesSecondary) reason += `; does not fix ${label(secondary.measure)}${hemNote(secondary)}`;
       if (!c.fixesPrimary) reason += `; does not fix ${label(primary.measure)}${hemNote(primary)}`;
-      return { itemId: c.s.id, drivers, diffs, fixesSecondary: c.fixesSecondary, reason };
+      return { itemId: c.s.id, drivers, diffs, fixesSecondary: c.fixesSecondary, reason, ...(relaxedBand && c.gap > priceCap ? { outsideBand: true } : {}) };
     };
     // Bring a range in one trip: the best fit first, then the next distinct fits (one per size and cut).
     const options = distinctBy(candidates, (c) => `${c.s.size}|${c.s.cut}`, K).map(fitOption);
