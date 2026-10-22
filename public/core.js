@@ -202,7 +202,8 @@ export function describeEvent(e) {
     case 'on_the_way': return `On the way to Room ${p.room}`;
     case 'delivered': return `Handed to the customer by the ${roleLabel(e.actor).toLowerCase()}`;
     case 'round_opened': return `Another attempt: ${(p.baselineIds || []).map(itemName).join(' + ')} still not right (${issuesText(p)})`;
-    case 'tryon_feedback': return p.result === 'fits' ? 'Customer says it fits' : 'Customer says it is still not right';
+    case 'tryon_feedback': return { fits: 'Customer says it fits', no_more: 'Customer says they are all set', none_close: 'Customer says none came close' }[p.result] || 'Customer says it is still not right';
+    case 'no_match': return 'Associate says nothing in stock fits this customer';
     case 'floor_pull_requested': return `Floor pull: ${itemName(p.itemId)} (rack ${p.rack})`;
     case 'floor_pull_done': return 'Floor pull done';
     case 'restock_task_created': return `Restock task sent to the floor: ${p.kind === 'recount' ? 'recount' : 'restock near the fitting rooms'} ${itemName(p.skuId)}${p.rack ? ` (rack ${p.rack})` : ''}`;

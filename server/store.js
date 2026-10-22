@@ -14,7 +14,9 @@ export function createStore({ file = null, now = Date.now } = {}) {
   };
 
   if (file && fs.existsSync(file)) {
-    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    const text = fs.readFileSync(file, 'utf8');
+    if (text && !text.endsWith('\n')) fs.appendFileSync(file, '\n'); // a torn last line must not swallow the next event
+    const lines = text.split('\n').filter(Boolean);
     for (const line of lines) {
       try {
         const o = JSON.parse(line);

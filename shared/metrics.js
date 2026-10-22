@@ -15,7 +15,7 @@ export function median(nums) {
 const ratio = (n, d) => (d > 0 ? n / d : null);
 
 export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
-  const { requests, tasks: allTasks, discrepancies, recounts, replenished } = deriveAll(events);
+  const { requests, tasks: allTasks, discrepancies, recounts, replenished } = deriveAll(events, catalogue);
   const tasks = allTasks.filter((t) => t.taskType !== 'restock'); // customer floor pulls
   const restockTasks = allTasks.filter((t) => t.taskType === 'restock'); // dispatched from the Manager
 
@@ -282,13 +282,13 @@ function buildHeatmap(requests, catalogue) {
         if (!sku) continue;
         const info = mergeIssue({ sku, issue: rd.issue, issues: rd.issues, chips: rd.chips, parsed: rd.parsed, parseMethod: rd.method });
         const targets = (info.issues.length > 1 ? [info.primary, info.secondary] : [info.primary]).filter(Boolean);
-        const label = `${sku.name} · ${sku.cut}`;
+        const label = `${sku.department === 'Women' ? "Women's " : ''}${sku.name} · ${sku.cut}`; // the two ranges are graded differently
         if (!rows.has(label)) rows.set(label, { label, cells: Object.fromEntries(HEATMAP_COLUMNS.map((a) => [a, { more: 0, less: 0 }])), total: 0 });
         const row = rows.get(label);
         for (const t of targets) {
           // An area that was only assumed is not plotted as if it were stated: it goes to the "general" column.
           const column = (t.areaSource ?? t.source) === 'default' ? 'general' : t.area;
-          row.cells[column][['tight', 'short'].includes(t.word) ? 'more' : 'less'] += 1;
+          (row.cells[column] ?? row.cells.general)[['tight', 'short'].includes(t.word) ? 'more' : 'less'] += 1;
           row.total += 1;
         }
       }

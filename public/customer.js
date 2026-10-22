@@ -127,8 +127,9 @@ handlers['c-none-close'] = async (el) => {
   const out = await act(() => api('POST', `/api/requests/${el.dataset.v}/try-on`, { result: 'none_close' }));
   if (out) location.hash = `#customer/${el.dataset.v}`; // back to the tracker: the runner is coming
 };
-const tried = new Set(); // requests whose items she says she has tried on: the fit question waits for that
-handlers['c-tried'] = (el) => { tried.add(el.dataset.v); hooks.render(); };
+const tried = new Set(); // attempts whose items she says she has tried on ("request:attempt"): the fit question waits for that
+const triedKey = (r) => `${r.id}:${r.round}`; // a new attempt asks again
+handlers['c-tried'] = (el) => { const r = S.derived.byId[el.dataset.v]; if (r) { tried.add(triedKey(r)); hooks.render(); } };
 handlers['c-another'] = (el) => { location.hash = `#customer?room=${S.derived.byId[el.dataset.v]?.room}&from=${el.dataset.v}`; };
 handlers['c-decline'] = (el) => act(() => api('POST', `/api/requests/${el.dataset.v}/decline-item`));
 handlers['c-cancel'] = async (el) => {
@@ -365,7 +366,7 @@ function tryOnBlock(r, many) {
       <button class="btn primary block" style="margin-top:8px" data-action="c-another" data-v="${esc(r.id)}">Tell us what's still not right</button>`;
   }
   // Asked only once she says she has tried it on, not the moment it arrives.
-  if (!tried.has(r.id)) return `<button class="btn primary block" style="margin-top:10px" data-action="c-tried" data-v="${esc(r.id)}">I've tried ${many ? 'them' : 'it'} on</button>`;
+  if (!tried.has(triedKey(r))) return `<button class="btn primary block" style="margin-top:10px" data-action="c-tried" data-v="${esc(r.id)}">I've tried ${many ? 'them' : 'it'} on</button>`;
   return `<div style="margin-top:10px"><strong>How ${many ? 'do they' : 'does it'} fit?</strong></div>
     <div class="btn-grid" style="margin-top:8px">
       <button class="btn primary" data-action="c-tryon" data-result="fits" data-v="${esc(r.id)}">👍 Fits great</button>

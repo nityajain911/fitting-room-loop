@@ -379,3 +379,5 @@ body[data-view="manager"] .view, body[data-view="admin"] .view, body[data-view="
 .hcell b { font-size: 14px; }
 .hcell.empty { color: var(--muted); font-weight: 400; }
 .flegend .zero { opacity: .55; }
+/* A locked tablet has no tab bar, so the send button sits at the bottom of the screen, not above a bar that is not there. */
+body[data-mode="customer"] .cta-wrap, body[data-mode="staff"] .cta-wrap, body[data-mode="manager"] .cta-wrap { bottom: env(safe-area-inset-bottom); }

@@ -99,6 +99,7 @@ async function poll() {
         if (j !== S.settingsJson) { // thresholds, parser mode and demo toggles can change at any time
           S.settingsJson = j;
           S.config = data.settings.config;
+          S.saved = data.settings.saved;
           S.roster = data.settings.staff || [];
           S.parser = data.settings.parser;
           S.demo = { enabled: !!data.settings.demoControls, ...data.settings.demo };
@@ -151,6 +152,7 @@ async function keepAwake() {
   try {
     const cfg = await (await fetch('/api/config')).json();
     S.config = cfg.config;
+    S.saved = cfg.saved;
     S.roster = cfg.staff || [];
     S.parser = cfg.parser;
     S.catalogueLabel = cfg.catalogueLabel;

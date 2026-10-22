@@ -412,3 +412,16 @@ Rule for every change here: a screen ends up with fewer words than before, not m
 - **Price reason.** The one-tap reason is "Price difference" (customer-stated). It is offered only when the customer declined an alternative that cost more than the item it was brought for (`declinedPricier`), or when it is already recorded. The parser still maps price notes to it.
 - **Manager.** The heatmap shows "—" for empty cells and, for others, the count with only the directions that exist ("1 tight", "1 tight · 1 loose"; "short"/"long" for length). The save-rate card adds "₹X saved" (what converted requests came to: the item bought, or for a cross-store order what the customer wanted). "Where requests ended" lists every outcome with its count and rupee value; for outcomes that did not convert the value is what the customer was after. All figures use the sample prices.
 
+## 42. Addendum (2026-10-23): code review fixes
+A full read of the code (server, shared, browser) plus a static check (undefined and unused names, none left undefined) and probing the API with odd sequences. Each fix has a regression test in `test/bugfixes.test.js`, except the three that are only in the browser.
+- **After the hand-over.** The API accepted a floor pull and a "not on rack" report once the customer had the items (the report withdrew a trip being tried on), and a hand-over after the customer had declined the items. All three are now refused (409), and the runner's "Not on rack" buttons are no longer shown after the hand-over.
+- **Reading a typed reason.** "Come back later" was tagged as a time constraint (the rule matched "late" inside "later") and "arrange" as a colour problem (matched "rang"). Both now match whole words only.
+- **Event file.** A torn last line (a crash mid-write) no longer swallows the next event: the file is closed with a newline on load.
+- **Errors.** A request body over the limit is a 413, not a 500.
+- **Admin.** With fast timers on, the Timing form showed the temporary 20-second values and Save would have stored them as real settings. Settings now carry `saved` (what the form edits) beside the effective times.
+- **Manager.** The heatmap keeps the women's range apart from the men's for the same garment and cut. Metrics are computed against the catalogue given to them. A stray body area can no longer crash the heatmap.
+- **Event log wording.** "All set", "none came close" and "nothing in stock fits" were all logged as "still not right".
+- **Customer.** The "I've tried them on" step asks again on every attempt (it was remembered per request). A locked tablet's send button no longer floats above a tab bar that is not there.
+- **Runner.** The bar's menu and outcome panel belong to one step of one attempt and close themselves when the request moves on (the outcome panel used to stay open into the next attempt).
+- **Cleanup.** Removed dead code and unused imports.
+

@@ -1,8 +1,6 @@
 // Pure helpers behind the visual components (SLA rings, bullet chart, outcome funnel, rack zones).
 // They compute numbers and words only; the screens draw them.
 
-const r1 = (n) => Math.round(n * 10) / 10;
-
 /** A wait in a few words for a customer: "under a minute", "about 2 min". */
 export function waitPhrase(ms) {
   if (ms == null) return null;

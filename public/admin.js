@@ -93,7 +93,7 @@ function settingsNote(c) {
 }
 
 function timingTab() {
-  return `${escalationTimes(S.config)}${settingsNote(S.config)}`;
+  return `${escalationTimes(S.saved ? { ...S.config, ...S.saved } : S.config)}${settingsNote(S.config)}`; // the form shows what is saved, not fast-timer values
 }
 
 /** Numbers behind the dashboard, the raw event log, and clearing the demo data. */

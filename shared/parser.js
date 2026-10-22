@@ -80,7 +80,7 @@ const AREA_LOOKUP = lookup(AREA_WORDS);
 const ISSUE_LOOKUP = lookup(ISSUE_KEYWORDS);
 
 export function ruleBasedCustomer(text) {
-  const tokens = String(text ?? '').toLowerCase().match(/[a-zऀ-ॿ]+/g) || [];
+  const tokens = String(text ?? '').toLowerCase().match(/[a-z\u0900-\u097F]+/g) || [];
   const pairs = [];
   let area = null;
   for (const t of tokens) {
@@ -107,12 +107,12 @@ export function ruleBasedCustomer(text) {
 }
 
 const TAG_RULES = [
-  ['time_constraint', /travel|flight|train|hurry|jaldi|tonight|cannot wait|can't wait|cant wait|no time|short on time|late/],
+  ['time_constraint', /travel|flight|train|hurry|jaldi|tonight|cannot wait|can't wait|cant wait|no time|short on time|\blate\b/],
   ['alteration_not_wanted', /alteration|hemming|\bhem\b|tailor|darzi/],
   ['price', /price|expensive|costly|discount|budget|mehenga|mahanga|cheaper/],
   ['stock_unavailable', /out of stock|not in stock|no stock|stock nahi|unavailable|not available/],
   ['size_unavailable', /size (not|nahi)|no size|size unavailable/],
-  ['colour_unavailable', /colou?r|rang/],
+  ['colour_unavailable', /colou?r|\brang\b/],
   ['style_not_liked', /style|design|not like|didn't like|did not like|pasand nahi/],
   ['will_return', /come back|return later|will return|baad mein|wapas|later/],
   ['just_browsing', /browsing|just looking|dekh raha|dekh rahi/],

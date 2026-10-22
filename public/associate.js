@@ -1,7 +1,7 @@
 // Screen 2 — associate (fitting-room runner / floor associate).
 import {
-  S, hooks, handlers, api, act, esc, now, toast, timerHtml, fmtDur, issueLabel, outcomeLabel, itemName,
-  methodLabel, reasonLabel, roleLabel, issuesText, openAttr, sections, STAGE_TEXT, ringHtml, rackPill,
+  S, hooks, handlers, api, act, esc, now, toast, timerHtml, fmtDur, outcomeLabel, itemName,
+  methodLabel, reasonLabel, roleLabel, issuesText, openAttr, STAGE_TEXT, ringHtml, rackPill,
   pairedId, setPaired, rosterOn, me,
 } from './core.js';
 import { tripItemName } from '/shared/visuals.js';
@@ -20,8 +20,10 @@ import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVI
 const drafts = {}; // requestId -> { fields, method, original } (AI-structured reason being edited)
 const picks = {};  // requestId -> { sig, ids: Set } the items ticked for the trip (default: all suggested items)
 let lastRole = 'runner';
-const moreOpen = {}; // requestId -> the bar's secondary actions are showing
-const closing = {};  // requestId -> the bar is showing the outcome buttons
+const moreOpen = {}; // requestId -> the step the bar's secondary actions were opened at
+const closing = {};  // requestId -> the step the bar's outcome buttons were opened at
+/** The bar's menu and outcome panel belong to one step of one attempt: they close themselves when the request moves on. */
+const stepKey = (x) => `${x.status}|${x.suggestionState ?? ''}|${x.deliveredTs ?? ''}|${x.round ?? ''}|${x.itemDeclined ? 1 : 0}`;
 const picked = {};   // requestId -> Set of item ids ticked off while walking the racks
 
 /** Who is acting, for the server: the team member this phone joined as (none when there is no roster). */
@@ -31,8 +33,18 @@ const go = (hash) => { location.hash = hash; };
 const post = (path, body) => act(() => api('POST', path, body));
 const rerender = () => hooks.render();
 
-handlers['a-more-toggle'] = (el) => { moreOpen[el.dataset.v] = !moreOpen[el.dataset.v]; rerender(); };
-handlers['a-close-open'] = (el) => { closing[el.dataset.v] = true; moreOpen[el.dataset.v] = false; rerender(); };
+handlers['a-more-toggle'] = (el) => {
+  const x = S.derived.byId[el.dataset.v];
+  if (!x) return;
+  moreOpen[x.id] = moreOpen[x.id] === stepKey(x) ? null : stepKey(x);
+  rerender();
+};
+handlers['a-close-open'] = (el) => {
+  const x = S.derived.byId[el.dataset.v];
+  if (!x) return;
+  closing[x.id] = stepKey(x); moreOpen[x.id] = null;
+  rerender();
+};
 handlers['a-close-cancel'] = (el) => { delete closing[el.dataset.v]; rerender(); };
 handlers['a-pick'] = (el) => {
   const set = (picked[el.dataset.id] ||= new Set());
@@ -331,15 +343,15 @@ const RESTOCK_HELP = {
 const RESTOCK_DONE = { recount: 'Recounted — record corrected', replenish: 'Restocked' };
 
 /** The one thing to do next, pinned to the bottom of the screen. Anything else sits behind "⋯". */
-const bar = (id, primary, more = []) => `<div class="actionbar">
-  ${more.length && moreOpen[id] ? `<div class="bar-more">${more.join('')}</div>` : ''}
-  <div class="bar-row">${primary}${more.length ? `<button class="btn bar-dots" data-action="a-more-toggle" data-v="${esc(id)}" aria-label="More actions" aria-expanded="${!!moreOpen[id]}">⋯</button>` : ''}</div></div>`;
+const bar = (x, primary, more = []) => { const open = moreOpen[x.id] === stepKey(x); return `<div class="actionbar">
+  ${more.length && open ? `<div class="bar-more">${more.join('')}</div>` : ''}
+  <div class="bar-row">${primary}${more.length ? `<button class="btn bar-dots" data-action="a-more-toggle" data-v="${esc(x.id)}" aria-label="More actions" aria-expanded="${open}">⋯</button>` : ''}</div></div>`; };
 const barBtn = (action, id, label, extra = '', cls = 'primary') => `<button class="btn ${cls} xl" data-action="${action}" data-v="${esc(id)}" ${extra}>${label}</button>`;
 const moreBtn = (action, id, label, extra = '') => `<button class="btn block ${extra.includes('danger') ? 'danger' : ''}" data-action="${action}" data-v="${esc(id)}" ${extra.replace('danger', '')}>${label}</button>`;
 
 function taskBar(t, doneLabel) {
-  if (t.status === 'requested') return bar(t.id, barBtn('a-task-accept', t.id, 'Accept'));
-  if (t.status === 'accepted') return bar(t.id, barBtn('a-task-done', t.id, doneLabel));
+  if (t.status === 'requested') return bar(t, barBtn('a-task-accept', t.id, 'Accept'));
+  if (t.status === 'accepted') return bar(t, barBtn('a-task-done', t.id, doneLabel));
   return '';
 }
 
@@ -379,26 +391,26 @@ const pullState = (r, role) => {
 function requestBar(r, role) {
   if (!isOpen(r)) return '';
   const left = moreBtn('a-left-early', r.id, 'Customer left');
-  if (closing[r.id]) return `<div class="actionbar"><div class="bar-out">${outcomeButtons(r)}</div><button class="link-btn bar-cancel" data-action="a-close-cancel" data-v="${esc(r.id)}">Back</button></div>`;
-  if (r.status === 'requested') return bar(r.id, barBtn('a-accept', r.id, 'Accept', `data-role="${esc(r.assistedBy === role ? role : r.route.role)}"`));
-  if (r.itemDeclined) return bar(r.id, barBtn('a-next-best', r.id, 'Show next best', 'data-cause="customer_declined"'), [left]);
+  if (closing[r.id] === stepKey(r)) return `<div class="actionbar"><div class="bar-out">${outcomeButtons(r)}</div><button class="link-btn bar-cancel" data-action="a-close-cancel" data-v="${esc(r.id)}">Back</button></div>`;
+  if (r.status === 'requested') return bar(r, barBtn('a-accept', r.id, 'Accept', `data-role="${esc(r.assistedBy === role ? role : r.route.role)}"`));
+  if (r.itemDeclined) return bar(r, barBtn('a-next-best', r.id, 'Show next best', 'data-cause="customer_declined"'), [left]);
   const opts = suggestionItemIds(r.suggestion).map((id) => getSku(id)).filter(Boolean);
   const pull = pullState(r, role);
   const pullBtn = pull.show ? [moreBtn('a-pull', r.id, `Ask floor to pull${pull.tripItems.length > 1 ? ` all ${pull.tripItems.length}` : ''}`)] : [];
   if (r.status === 'accepted' && r.suggestionState === 'shown' && opts.length) {
     const n = selection(r).size;
-    return bar(r.id, barBtn('a-confirm', r.id, `Bring ${n === opts.length && n > 1 ? 'all ' : ''}${n}`, n ? '' : 'disabled'), [
+    return bar(r, barBtn('a-confirm', r.id, `Bring ${n === opts.length && n > 1 ? 'all ' : ''}${n}`, n ? '' : 'disabled'), [
       ...(role === 'runner' ? [moreBtn('a-confirm', r.id, 'Bring &amp; ask floor to pull', `data-pull="1" ${n ? '' : 'disabled'}`)] : []),
       moreBtn('a-more', r.id, 'Other options'),
       moreBtn('a-nomatch', r.id, 'Nothing fits', 'danger'),
       left,
     ]);
   }
-  if (r.status === 'on_the_way' && r.deliveredTs == null) return bar(r.id, barBtn('a-deliver', r.id, 'Handed to customer'), [...pullBtn, left]);
+  if (r.status === 'on_the_way' && r.deliveredTs == null) return bar(r, barBtn('a-deliver', r.id, 'Handed to customer'), [...pullBtn, left]);
   const door = r.status === 'on_the_way' && r.onTheWay?.items?.length ? [moreBtn('a-door-open', r.id, '🔄 Another size')] : [];
   // Right after the hand-over the customer is still trying things on: closing is quiet until they have answered.
   const waiting = r.status === 'on_the_way' && !r.tryOn;
-  return bar(r.id, barBtn('a-close-open', r.id, 'Close…', '', waiting ? '' : 'primary'), [...door, left]);
+  return bar(r, barBtn('a-close-open', r.id, 'Close…', '', waiting ? '' : 'primary'), [...door, left]);
 }
 
 function requestDetail(r, role) {
@@ -469,15 +481,6 @@ function issuePanel(r, info) {
     ${info.notes.map((a) => `<div class="small muted">${esc(a)}</div>`).join('')}
     <div class="legend-line">👤 customer tapped · ✨ parsed by AI · ⚙ rule-based fallback, not AI · ~ assumed</div>
   </div>`;
-}
-
-const fmtDelta = (d) => (d == null ? '–' : d > 0 ? `+${d}` : d < 0 ? `−${Math.abs(d)}` : '0');
-
-function rowsFor(sku, alt, s) {
-  if (s.diffs?.length) return s.diffs;
-  return Object.keys(sku.m).filter((k) => k in alt.m).map((k) => ({
-    measure: k, original: sku.m[k], alt: alt.m[k], delta: Math.round((alt.m[k] - sku.m[k]) * 10) / 10, role: 'other',
-  }));
 }
 
 const onRecord = (id) => getSku(id)?.stock ?? 0;
@@ -564,7 +567,7 @@ function suggestionBlock(r, sku, role, compact = false) {
         <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
           ${reported(o.id) ? `<div class="small muted">${reported(o.id)} reported missing</div>` : ''}
           ${why && opts.length > 1 ? `<div class="small">${esc(cap1(why))}</div>` : ''}</div>
-        ${isOpenReq && !r.itemDeclined && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}
+        ${isOpenReq && !r.itemDeclined && r.deliveredTs == null && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}
       </div>`;
     }).join('');
     if (opts.length > 1 && s.kind === 'alternative_style') {
@@ -604,7 +607,7 @@ function suggestionBlock(r, sku, role, compact = false) {
       ${fallbackHead}
       ${trip.map((o) => `<div class="optrow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack)}</div>
 </div>
-        <button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button></div>`).join('')}
+        ${r.deliveredTs == null ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}</div>`).join('')}
       ${struckHtml}
       <details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}><summary>Measurements</summary>${trip.length ? comparisons(r, s, trip, sku) : ''}</details>
       ${tasks}

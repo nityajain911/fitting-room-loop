@@ -9,7 +9,7 @@ import { makeLlm } from './llm.js';
 import { makeConfig } from '../shared/config.js';
 import { CATALOGUE, CATALOGUE_LABEL, getSku, skuLabel } from '../shared/catalogue.js';
 import { computeMetrics } from '../shared/metrics.js';
-import { ISSUES, CHIPS, OUTCOMES, TRYON_RESULTS, RESTOCK_KINDS, RESTOCK_SIGNAL, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
+import { CHIPS, OUTCOMES, TRYON_RESULTS, RESTOCK_KINDS, RESTOCK_SIGNAL, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
 import { routeFor } from '../shared/routing.js';
 import { deriveAll, isOpen, effectiveCatalogue, suggestionExclusions, stageOf, stageStart, stageLimits, ownerRole } from '../shared/derive.js';
 import { normaliseStaff, MAX_STAFF, nextAssignment, accessFor } from '../shared/staffing.js';
@@ -84,7 +84,8 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   const llmFor = (req) => (llm && !demo.forceFallback && allowLlm(req.ip) ? llm : null);
   const parserInfo = () => (llm ? { mode: demo.forceFallback ? 'forced_fallback' : 'ai', model: llm.model } : { mode: 'fallback' });
   const settings = ({ admin = false } = {}) => ({
-    config: cfg(), parser: parserInfo(), demoControls, staff: staffView(admin || demoControls),
+    config: cfg(), saved: Object.fromEntries(Object.keys(EDITABLE).map((k) => [k, config[k]])), // `saved` is what the Admin form edits: not the temporary fast-timer values
+    parser: parserInfo(), demoControls, staff: staffView(admin || demoControls),
     demo: { forceFallback: demo.forceFallback, fastTimers: fastOn(), fastTimersUntil: fastOn() ? fastUntil : null },
   });
 
@@ -372,6 +373,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     const cause = req.body?.cause;
     if (cause === 'not_on_rack') {
       if (!['shown', 'confirmed'].includes(r.suggestionState)) throw conflict('No suggested item to report');
+      if (r.deliveredTs != null) throw conflict('The customer already has the items'); // reporting one now would withdraw a trip being tried on
       // After confirming, the item reported is one of the trip; before, one of the suggested options.
       const inTrip = r.onTheWay?.items?.map((i) => i.itemId) || [];
       const candidates = inTrip.length ? inTrip : suggestionItemIds(r.suggestion);
@@ -480,6 +482,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   app.post('/api/requests/:id/floor-pull', (req, res) => {
     const r = getRequest(req.params.id);
     if (!isOpen(r) || r.status === 'requested') throw conflict('Request must be accepted and open');
+    if (r.deliveredTs != null) throw conflict('The items have already been handed to the customer');
     // One live pull at a time: cancel it first to ask again.
     if (r.floorTaskIds.some((id) => ['requested', 'accepted', 'done'].includes(derived().byId[id]?.status))) throw conflict('A floor pull is already requested for this request');
     // One pull covers every item of the trip unless the runner names some.
@@ -562,6 +565,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     const r = getRequest(req.params.id);
     if (r.status !== 'on_the_way' || !r.onTheWay?.items?.length) throw conflict('Nothing is on its way to hand over');
     if (r.deliveredTs != null) throw conflict('Already handed over');
+    if (r.itemDeclined) throw conflict('The customer has declined these items: show the next best first');
     append(r.id, 'delivered', actorOf(req, r), {});
     // One hand-over, whoever does it: a floor pull still in progress has nothing left to hand over, so it is withdrawn.
     for (const id of r.floorTaskIds) {
@@ -608,10 +612,10 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   app.use('/shared', express.static(path.join(ROOT, 'shared')));
   app.use(express.static(path.join(ROOT, 'public')));
 
-  // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
     if (err?.type === 'entity.parse.failed' || err?.status === 400) return res.status(400).json({ error: 'Bad JSON' });
+    if (err?.status === 413) return res.status(413).json({ error: 'That is too large to send' });
     console.error('Unhandled error:', err?.message);
     return res.status(500).json({ error: 'Server error' });
   });
