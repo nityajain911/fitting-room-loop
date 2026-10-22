@@ -59,6 +59,7 @@ function render() {
   const { view, args, query, moved } = parseRoute();
   if (moved) history.replaceState(null, '', `#${view}`);
   document.body.dataset.mode = currentMode();
+  document.body.dataset.view = view;
   document.querySelector('.admin-link').hidden = !showAdminLink(currentMode());
   syncBell(view);
   document.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('on', a.dataset.tab === view));

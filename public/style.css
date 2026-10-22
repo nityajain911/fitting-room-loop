@@ -328,3 +328,45 @@ body[data-mode="demo"] .actionbar { bottom: 52px; }
 .view:has(.actionbar) > .actionbar { margin-top: auto; }
 body[data-mode="demo"] .view:has(.actionbar) { min-height: calc(100dvh - 190px); }
 .incoming.wait strong { color: var(--text); }
+
+/* Manager and Admin are read on a desk: they use the width. Everything else stays a phone-sized column. */
+body[data-view="manager"] .view, body[data-view="admin"] .view, body[data-view="manager"] .topbar, body[data-view="admin"] .topbar { max-width: 1160px; }
+.mgr-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.live { margin-top: 12px; }
+.lnums { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
+.lnum b { display: block; font-size: 26px; line-height: 1.1; }
+.lnum span { font-size: 12px; color: var(--muted); }
+.lnum.hot b { color: var(--warn); }
+.lnum.bad b { color: var(--danger); }
+.rooms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.room { width: 36px; height: 36px; border-radius: 10px; display: inline-grid; place-items: center; font-weight: 700; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
+.room.waiting { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.room.accepted { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.room.on_the_way { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.room.trying { background: var(--ok); color: #fff; border-color: transparent; }
+.room.esc { outline: 2px solid var(--danger); outline-offset: 1px; }
+.rlegend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+.rlegend span { display: inline-flex; align-items: center; gap: 4px; }
+.rlegend i.room { width: 10px; height: 10px; border-radius: 3px; }
+.team { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.member { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.member.away { opacity: .5; }
+.attn-grid { display: grid; gap: 10px; }
+.signal-group > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; }
+.signal-group > summary::-webkit-details-marker { display: none; }
+.signal-row { border-top: 1px solid var(--border); padding: 8px 0; font-size: 14px; }
+.signal-group[open] > summary { margin-bottom: 6px; }
+.srow-act { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+@media (min-width: 960px) {
+  .north { grid-template-columns: repeat(3, 1fr); }
+  .attn-grid { grid-template-columns: repeat(2, 1fr); }
+  .mgr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: start; }
+}
+.lnum b .timer { font-size: inherit; font-weight: inherit; }
+.tl-strip { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.tl-strip li { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font-size: 13px; }
+.tl-strip li b { display: block; font-size: 15px; }
+.tl-strip li span { color: var(--muted); }
+.esc-row .plain { margin-left: 6px; }
+.esc-row .esc-input { display: inline-flex; align-items: center; gap: 6px; } .esc-row .plain { min-width: 112px; text-align: left; }

@@ -2,11 +2,11 @@
 // metrics, parser statistics, the raw event log, and clearing demo data. Reached from the header link (#admin).
 import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, describeEvent, issueLabel, itemName } from './core.js';
 import { computeMetrics } from '/shared/metrics.js';
-import { stageLimits } from '/shared/derive.js';
 import { SKILLS } from '/shared/skills.js';
 import { FITTING_ROOMS } from '/shared/events.js';
 import { loadOf } from '/shared/staffing.js';
 import { DEFAULTS } from '/shared/config.js';
+import { plainDuration, timingTimeline } from '/shared/timing.js';
 
 const view = { filter: 'all', room: null }; // timeline filter: all | escalated | room
 
@@ -59,33 +59,50 @@ handlers['m-filter'] = (el) => {
   hooks.render();
 };
 
+const TABS = [['team', 'Team'], ['timing', 'Timing'], ['devices', 'Devices'], ['data', 'Data'], ['demo', 'Demo']];
+const TAB_KEY = 'frl.admintab';
+let tab = (() => { try { return localStorage.getItem(TAB_KEY) || 'team'; } catch { return 'team'; } })();
+handlers['m-tab'] = (el) => {
+  tab = el.dataset.v;
+  try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+  hooks.render();
+};
+
+/** One section at a time. The rest of the admin's work is a tap away, not a scroll away. */
 export function render() {
-  const m = computeMetrics(S.events, undefined, S.config || undefined);
-  const c = S.config;
-  const decided = m.confirmed + m.rejected;
+  const tabs = TABS.filter(([k]) => k !== 'demo' || S.demo.enabled);
+  if (!tabs.some(([k]) => k === tab)) tab = 'team';
+  const body = { team: teamSection, timing: timingTab, devices: tabletLinks, data: dataTab, demo: demoControls }[tab];
   return `
     <a class="link" href="#manager">‹ Manager dashboard</a>
-    <div class="row"><h1>Admin</h1><button class="btn danger" data-action="m-clear">Clear demo data</button></div>
-    <p class="muted small">Prototype internals. Not part of the store manager's view.</p>
+    <h1>Admin</h1>
+    <div class="seg" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="${tab === k ? 'on' : ''}" aria-selected="${tab === k}" data-action="m-tab" data-v="${k}">${l}</button>`).join('')}</div>
+    ${body()}`;
+}
 
-    ${tabletLinks()}
-
-    ${teamSection()}
-
-    ${escalationTimes(c)}
-
-    <h2>Prototype settings</h2>
+/** Prototype settings the admin cannot change here, read-only. */
+function settingsNote(c) {
+  return `<h2>Matching rules</h2>
     <div class="settings">
       closeness limits (a bigger change is not offered): tops chest ${c?.fitLimits?.top.chest ?? '–'} · waist ${c?.fitLimits?.top.waist ?? '–'} · length ${c?.fitLimits?.top.length ?? '–'} cm, trousers waist ${c?.fitLimits?.trousers.waist ?? '–'} · inseam ${c?.fitLimits?.trousers.inseam ?? '–'} cm, at most ${c?.maxSizeSteps ?? '–'} sizes away ·
       alteration offered: ${c ? (c.alterationOffered ? 'yes' : 'no') : '–'} · min improvement ${c?.minImprovementCm ?? '–'} cm ·
       small sample below n=${c?.smallSampleN ?? '–'} ·
       signals need ≥${c?.signalMinN ?? '–'} requests and ≥${c ? Math.round(c.signalMinShare * 100) : '–'}% share, rack recount after ${c?.signalMinMisses ?? '–'}+ report, high demand at ${c?.signalMinPulls ?? '–'}+ replacements · bring up to ${c?.bringCount ?? '–'} items per trip ·
       parser: ${parserText()}${S.demo.fastTimers ? ' · <strong>⚡ fast timers ON</strong>' : ''}
-    </div>
+    </div>`;
+}
 
-    ${demoControls()}
+function timingTab() {
+  return `${escalationTimes(S.config)}${settingsNote(S.config)}`;
+}
 
-    <h2>Detailed metrics</h2>
+/** Numbers behind the dashboard, the raw event log, and clearing the demo data. */
+function dataTab() {
+  const m = computeMetrics(S.events, undefined, S.config || undefined);
+  const c = S.config;
+  const decided = m.confirmed + m.rejected;
+  return `
+    <div class="row"><h2>Detailed metrics</h2><button class="btn danger" data-action="m-clear">Clear demo data</button></div>
     <div class="card stack small">
       <div class="row"><span>Suggestion acceptance</span><strong>${pct(m.suggestionAcceptance)} (${m.confirmed} of ${decided} decided)</strong></div>
       <div class="row"><span>Reported not on rack</span><strong>${m.inventoryDiscrepancies.total} (${m.inventoryDiscrepancies.bySku.length} SKUs)</strong></div>
@@ -124,22 +141,42 @@ const parserText = () => {
   return 'rule-based fallback (no API key)';
 };
 
-/** The times that move a request along: escalation per stage, and the waits before it widens to backups and to everyone. */
+/**
+ * The times that move a request along, in plain words: when the backup is asked, when everyone is, and when the manager
+ * is told. Each number shows what it comes to ("= 2 minutes"), and the strip above them shows the whole sequence.
+ */
+const timelineHtml = (cfg) => `<ol class="tl-strip" id="tl-strip">${timingTimeline(cfg).map((st) => `<li><b>${st.at === 0 ? 'At once' : esc(plainDuration(st.at))}</b><span>${esc(st.what)}</span></li>`).join('')}</ol>`;
+const readValues = () => {
+  const num = (id) => Number(document.getElementById(id)?.value);
+  return { primaryWaitSeconds: num('wait-primary'), secondaryWaitSeconds: num('wait-secondary'), acceptEscalateSeconds: num('esc-accept'), deliverEscalateSeconds: num('esc-deliver') };
+};
+// Typing in a time updates its plain-words readout and the strip straight away.
+document.addEventListener('input', (e) => {
+  if (!e.target.matches?.('.esc-input input[data-unit]')) return;
+  const v = Number(e.target.value);
+  const out = e.target.closest('.esc-row')?.querySelector('.plain');
+  if (out) out.textContent = Number.isFinite(v) && v > 0 ? `= ${e.target.dataset.unit === 'min' ? plainDuration(v * 60) : plainDuration(v)}` : '';
+  const vals = readValues();
+  const strip = document.getElementById('tl-strip');
+  if (strip && Object.values(vals).every((n) => n > 0)) strip.outerHTML = timelineHtml(vals);
+});
+
 function escalationTimes(c) {
   const cfg = c || DEFAULTS;
-  const row = (id, label, hint, value) => `<label class="esc-row"><span><strong>${label}</strong>
-      <span class="small muted">${hint}</span></span>
-      <span class="esc-input"><input type="number" id="${id}" data-keep="${id}" min="5" max="3600" step="1" inputmode="numeric" value="${value}"> s</span></label>`;
-  return `<h2>Timing</h2><div class="card stack">
-    ${row('wait-primary', 'Primary person has it for', 'Then the least busy backup is added too (the first keeps it).', cfg.primaryWaitSeconds)}
-    ${row('wait-secondary', 'Backup has it for', 'Then it opens to everyone.', cfg.secondaryWaitSeconds)}
-    ${row('esc-accept', 'Escalate if not accepted within', `Placed → accepted. Turns amber at ${stageLimits(cfg, 'accept').warnSeconds}s.`, cfg.acceptEscalateSeconds)}
-    ${row('esc-deliver', 'Escalate if not on its way within', `Accepted → on its way. Turns amber at ${stageLimits(cfg, 'deliver').warnSeconds}s.`, cfg.deliverEscalateSeconds)}
-    <label class="esc-row"><span><strong>A room with nothing open is empty again after</strong><span class="small muted">The customer can end the visit sooner with "I'm done with this room". Minutes, 1 to 240.</span></span>
-      <span class="esc-input"><input type="number" id="room-session" data-keep="room-session" min="1" max="240" step="1" inputmode="numeric" value="${cfg.roomSessionMinutes ?? 30}"> min</span></label>
-    <div class="small muted">Waits are 5 to 3600 s, escalation times 10 to 3600 s, whole seconds. Whoever accepts first serves the request. Once accepted, a request stops showing as escalated and only escalates again if the delivery time is passed.${S.demo.fastTimers ? ' <strong>Fast timers are on and override these for now.</strong>' : ''}</div>
-    <button class="btn primary" data-action="m-save-esc">Save times</button>
-  </div>`;
+  const row = (id, label, value, unit = 's', min = 5, max = 3600) => `<label class="esc-row"><span><strong>${label}</strong></span>
+      <span class="esc-input"><input type="number" id="${id}" data-keep="${id}" data-unit="${unit === 's' ? 's' : 'min'}" min="${min}" max="${max}" step="1" inputmode="numeric" value="${value}"> ${unit}
+      <span class="plain muted small">= ${esc(unit === 'min' ? plainDuration(value * 60) : plainDuration(value))}</span></span></label>`;
+  return `<h2>When nobody picks up a request</h2>
+    <div class="card stack">
+      ${timelineHtml(cfg)}
+      ${row('wait-primary', 'Ask the backup person after', cfg.primaryWaitSeconds)}
+      ${row('wait-secondary', 'Ask everyone after another', cfg.secondaryWaitSeconds)}
+      ${row('esc-accept', 'Alert the manager if not accepted within', cfg.acceptEscalateSeconds, 's', 10)}
+      ${row('esc-deliver', 'Alert the manager if not on its way within', cfg.deliverEscalateSeconds, 's', 10)}
+      ${row('room-session', 'Free an empty room after', cfg.roomSessionMinutes ?? 30, 'min', 1, 240)}
+      ${S.demo.fastTimers ? '<div class="small"><strong>Fast timers are on and override these for now.</strong></div>' : ''}
+      <button class="btn primary" data-action="m-save-esc">Save</button>
+    </div>`;
 }
 
 const STATE_OF = (p, k) => (p.primary.includes(k) ? 'primary' : p.secondary.includes(k) ? 'secondary' : 'none');
@@ -148,7 +185,7 @@ const STATE_OF = (p, k) => (p.primary.includes(k) ? 'primary' : p.secondary.incl
 function tabletLinks() {
   const link = (label, hash) => `<div class="row small"><span>${label}</span><a class="link" href="${hash}" style="user-select:all">${esc(`${location.origin}/${hash}`)}</a></div>`;
   return `<h2>Devices</h2><div class="card stack">
-    <div class="small muted">Open a link once on the device. It stays locked to that role.</div>
+    <div class="small muted">Open once on each device. It stays locked.</div>
     ${FITTING_ROOMS.map((n) => link(`Room ${n} tablet`, `#customer?room=${n}&mode=customer`)).join('')}
     ${link('Runner / floor phone', '#associate?mode=staff')}
     ${link('Manager', '#manager?mode=manager')}
@@ -168,10 +205,10 @@ function teamSection() {
         <button class="link-btn danger" data-action="m-staff-del" data-id="${esc(p.id)}">Remove</button></div>
     </div>`;
   return `<h2>Team and sections</h2>
-    <p class="muted small">Give each runner and floor associate their sections. A new request goes to the least busy person with it as <strong>primary</strong>; after the primary wait the least busy <strong>backup</strong> is added too. Whoever accepts first serves it. With no team here, everyone sees everything.</p>
+    <p class="muted small">Primary gets a request first; backup is added after the wait. Whoever accepts first serves it. With no team, everyone sees everything.</p>
     ${staff.length ? staff.map(card).join('') : '<div class="card muted">No team yet. Add people below, or start from a sample team.</div>'}
     <div class="card stack">
-      <div class="small muted">Tap a section to cycle: primary, then backup, then none.</div>
+      <div class="small muted">Tap a section: primary, backup, none.</div>
       <input type="text" id="staff-label" data-keep="staff-label" maxlength="30" placeholder="Label, e.g. Runner 1" aria-label="Label">
       <select id="staff-type" data-keep="staff-type" aria-label="Type"><option value="runner">Fitting-room runner</option><option value="floor">Floor associate</option></select>
       <div class="row"><button class="btn primary" data-action="m-staff-add">Add person</button>

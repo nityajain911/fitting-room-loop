@@ -1,11 +1,13 @@
 // Screen 3 — manager dashboard ("store command center"). Only what a store manager acts on, drawn rather than listed.
 // Every number comes from computeMetrics(events). Definitions sit behind a small (i) toggle instead of captions.
 // Settings, demo controls, parser stats, per-SKU detail, the raw event log and "clear data" live on the Admin page.
-import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel } from './core.js';
+import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel, now, openAttr } from './core.js';
 import { computeMetrics } from '/shared/metrics.js';
-import { EVIDENCE_TYPES } from '/shared/events.js';
+import { EVIDENCE_TYPES, FITTING_ROOMS } from '/shared/events.js';
 import { bulletScale, outcomeFunnel } from '/shared/visuals.js';
-import { stageLimits, STAGE_LABEL } from '/shared/derive.js';
+import { stageLimits, STAGE_LABEL, isOpen } from '/shared/derive.js';
+import { RANGES, rangeStart, eventsSince, groupSignals } from '/shared/dashboard.js';
+import { liveFloor } from '/shared/live.js';
 import { DEFAULTS } from '/shared/config.js';
 
 const info = {}; // which (i) definitions are open
@@ -27,20 +29,34 @@ const title = (k, text, definition) => `<div class="kpi-title"><strong>${text}</
 
 /** What needs the manager right now (for the alert sound): every open escalation. */
 export function attention() {
-  const m = computeMetrics(S.events, undefined, S.config || undefined);
-  return new Map(m.openEscalations.map((id) => [id, true]));
+  return new Map(openEscalations().map((x) => [x.id, true]));
 }
 
+const openEscalations = () => [...S.derived.requests, ...S.derived.tasks].filter((x) => isOpen(x) && x.escalated);
+
+// The range chosen for the figures below it. The live floor and escalations are always "now".
+const RANGE_KEY = 'frl.range';
+const savedRange = () => { try { const k = localStorage.getItem(RANGE_KEY); return RANGES.some((r) => r.key === k) ? k : 'today'; } catch { return 'today'; } };
+let range = savedRange();
+handlers['m-range'] = (el) => {
+  range = el.dataset.v;
+  try { localStorage.setItem(RANGE_KEY, range); } catch { /* private mode */ }
+  hooks.render();
+};
+
 export function render() {
-  const m = computeMetrics(S.events, undefined, S.config || undefined);
+  const t = now();
+  const m = computeMetrics(eventsSince(S.events, rangeStart(range, t)), undefined, S.config || undefined);
   const cfg = S.config || DEFAULTS;
   const accept = stageLimits(cfg, 'accept');
   const deliver = stageLimits(cfg, 'deliver');
   return `
-    <div class="banner demo">Demo data — prototype only, not store results</div>
-    <h1>Manager dashboard</h1>
+    <div class="mgr-head"><h1>Manager</h1>
+      <div class="chips" role="group" aria-label="Time range">${RANGES.map((r) => `<button type="button" class="opt ${range === r.key ? 'on' : ''}" data-action="m-range" data-v="${r.key}" aria-pressed="${range === r.key}">${r.label}</button>`).join('')}</div></div>
+    <div class="small muted">Demo data, not store results</div>
 
-    ${escalationCards(m)}
+    ${liveView(t)}
+    ${escalationCards()}
 
     <div class="north">
       <div class="tile">${title('save', 'Issue save rate', 'Fitting-room proxy, not store conversion: (bought original + bought alternative + cross-store order) ÷ closed requests. Saved for later and cancelled requests are not counted as saves.')}
@@ -54,17 +70,52 @@ export function render() {
     </div>
     <div class="statusline">${m.total} requests · ${m.open} waiting · ${m.accepted} in progress · ${m.closed} closed${m.cancelled ? ` · ${m.cancelled} cancelled` : ''} · ${plural(m.escalations, 'escalation')}${m.assists ? ` (${m.assists} picked up)` : ''}${m.routing.recorded ? ` · ${Math.round(m.routing.primaryShare * 100)}% taken by their primary person` : ''}</div>
 
-    <h2>Where requests ended ${infoBtn('funnel')}</h2>
-    ${info.funnel ? '<div class="info-text">Every closed request, by outcome. The three green and blue segments (bought alternative, bought original, cross-store order) add up to the issue save rate. "Saved for later" is shown apart because it is not counted as a save. Cancelled requests are not closed, so they sit outside the bar.</div>' : ''}
-    ${funnel(m)}
+    <div class="mgr-cols">
+      <div>
+        <h2>Where requests ended ${infoBtn('funnel')}</h2>
+        ${info.funnel ? '<div class="info-text">Every closed request, by outcome. The three green and blue segments (bought alternative, bought original, cross-store order) add up to the issue save rate. "Saved for later" is shown apart because it is not counted as a save. Cancelled requests are not closed, so they sit outside the bar.</div>' : ''}
+        ${funnel(m)}
+        ${reasons(m)}
+      </div>
+      <div>
+        <h2>Fit issues by garment and body area ${infoBtn('heat')}</h2>
+        ${info.heat ? '<div class="info-text">Each cell counts fit reports for one garment and cut and body area; "No area" is where the customer named the issue but no body area. A request with two issues counts once under each. Coral: they needed more room or length (too tight, too short). Teal: they needed less (too loose, too long). Darker means more requests.</div>' : ''}
+        ${heatmap(m, cfg)}
+        ${m.signals.length ? `<h2>What to act on ${infoBtn('signals')}</h2>
+        ${info.signals ? '<div class="info-text">Simple rules over the counts above. Shares are of requests, not defect rates: only customers who asked for help are counted.</div>' : ''}${signals(m)}` : ''}
+      </div>
+    </div>`;
+}
 
-    <h2>Fit issues by garment and body area ${infoBtn('heat')}</h2>
-    ${info.heat ? '<div class="info-text">Each cell counts fit reports for one garment and cut and body area; "No area" is where the customer named the issue but no body area. A request with two issues counts once under each. Coral: they needed more room or length (too tight, too short). Teal: they needed less (too loose, too long). Darker means more requests.</div>' : ''}
-    ${heatmap(m, cfg)}
+/** The floor right now: queue, longest wait, each fitting room, and who holds what. Not affected by the range. */
+function liveView(t) {
+  const f = liveFloor(S.derived, t, { rooms: FITTING_ROOMS, roster: S.roster });
+  const num = (n, label, extra = '') => `<div class="lnum ${extra}"><b>${n}</b><span>${label}</span></div>`;
+  const ROOM_NAME = { free: 'free', waiting: 'waiting', accepted: 'being prepared', on_the_way: 'on the way', trying: 'trying on' };
+  return `<div class="card live">
+    <div class="lnums">
+      ${num(f.waiting, 'waiting', f.waiting ? 'hot' : '')}
+      <div class="lnum"><b>${f.oldestWaiting ? timerHtml(f.oldestWaiting, 'plain') : '–'}</b><span>longest wait</span></div>
+      ${num(f.inProgress, 'in progress')}${num(f.tryingOn, 'trying on')}${num(f.escalated, 'escalated', f.escalated ? 'bad' : '')}
+    </div>
+    <div class="rooms" role="img" aria-label="Fitting rooms">${f.rooms.map((r) => `<span class="room ${r.state} ${r.esc ? 'esc' : ''}" title="Room ${r.n}: ${ROOM_NAME[r.state]}${r.esc ? ', escalated' : ''}">${r.n}</span>`).join('')}</div>
+    <div class="rlegend small muted">${Object.entries(ROOM_NAME).map(([k, v]) => `<span><i class="room ${k}"></i>${v}</span>`).join('')}</div>
+    ${f.team.length ? `<div class="team">${f.team.map((p) => `<span class="member ${p.here ? '' : 'away'}" title="${p.here ? 'Phone on' : 'Phone off or off shift'}">${esc(p.label)} <b>${p.load}</b></span>`).join('')}</div>` : ''}
+  </div>`;
+}
 
-    ${m.signals.length ? `<h2>What to act on</h2>${signals(m)}` : ''}
-
-    ${reasons(m)}`;
+/** Escalations open now (not affected by the range). */
+function escalationCards() {
+  const items = openEscalations();
+  if (!items.length) return '';
+  const card = (x) => `<div class="card attn">
+      <div class="row"><strong>${x.kind === 'task' ? `Floor pull → Room ${esc(x.room)}` : `Room ${esc(x.room)} · ${esc(issuesText(x.cur ?? x))}${x.round > 1 ? ` · attempt ${x.round}` : ''}`}</strong>${timerHtml(x)}</div>
+      <div class="small">${x.kind === 'task' ? `${esc(itemName(x.itemId))} · rack ${esc(x.rack)}` : esc(itemName(x.skuId))}</div>
+      <div class="small muted">${esc(STAGE_LABEL[x.escalatedStage] || 'Escalated')} · ${x.assistedNow ? `${esc(roleLabel(x.assistedBy))} stepped in at ${esc(fmtClock(x.assistedTs))}` : 'nobody has stepped in yet'}</div>
+    </div>`;
+  const SHOWN = 4; // the rest are a tap away, so a bad hour does not push everything else off the screen
+  return `<h2 style="color:var(--danger)">Needs attention · ${items.length}</h2><div class="attn-grid">${items.slice(0, SHOWN).map(card).join('')}</div>
+    ${items.length > SHOWN ? `<details class="sec" data-sec="attn-more" ${openAttr('attn-more', false)}><summary>${items.length - SHOWN} more</summary><div class="attn-grid">${items.slice(SHOWN).map(card).join('')}</div></details>` : ''}`;
 }
 
 /** One median against the warning and escalation marks. */
@@ -80,17 +131,6 @@ function bullet(label, ms, cfg, waiting = 'no data yet') {
 }
 
 /** Open escalations only. Nothing is shown when there are none. */
-function escalationCards(m) {
-  const items = m.openEscalations.map((id) => S.derived.byId[id]).filter(Boolean);
-  if (!items.length) return '';
-  return `<h2 style="color:var(--danger)">Needs attention — ${plural(items.length, 'escalation')} open</h2>
-    ${items.map((x) => `<div class="card attn">
-      <div class="row"><strong>${x.kind === 'task' ? `Floor pull → Room ${esc(x.room)}` : `Room ${esc(x.room)} · ${esc(issuesText(x.cur ?? x))}${x.round > 1 ? ` · attempt ${x.round}` : ''}`}</strong>${timerHtml(x)}</div>
-      <div class="small">${x.kind === 'task' ? `${esc(itemName(x.itemId))} · rack ${esc(x.rack)}` : esc(itemName(x.skuId))}</div>
-      <div class="small muted">${esc(STAGE_LABEL[x.escalatedStage] || 'Escalated')} · ${x.assistedNow ? `${esc(roleLabel(x.assistedBy))} stepped in at ${esc(fmtClock(x.assistedTs))}` : 'nobody has stepped in yet'}</div>
-    </div>`).join('')}`;
-}
-
 const FUNNEL_COLOURS = { bought_alternative: 'var(--ok)', bought_original: '#7bcf9b', cross_store_order: 'var(--accent)', saved_for_later: '#a78bfa', left: 'var(--danger)' };
 
 /** 100% stacked bar of closed outcomes. */
@@ -146,11 +186,13 @@ function dispatchControl(s) {
   return `<button class="btn small-btn" data-action="m-dispatch" data-sku="${esc(s.dispatch.skuId)}" data-kind="${esc(s.dispatch.kind)}">${label}</button>`;
 }
 
+/** Grouped by kind: one card per kind, the first one open, the rest a tap away. Seven similar signals read as one. */
 function signals(m) {
-  return m.signals.map((s) => `<div class="card signal ${esc(s.kind)}">
-      <div class="small muted">${esc(KIND[s.kind])}</div><div>${esc(s.text)}</div>
-      ${s.action ? `<div style="margin-top:6px"><span class="pill ${SEVERITY[s.action.severity] || ''}">Action: ${esc(s.action.label)}</span> ${dispatchControl(s)}</div>` : ''}</div>`).join('')
-    + '<p class="label-note">Suggested actions come from simple rules on the counts above. Shares are of requests, not defect rates: only customers who asked for help are counted.</p>';
+  return groupSignals(m.signals).map((g, i) => `<details class="card signal-group ${esc(g.kind)}" data-sec="sig:${esc(g.kind)}" ${openAttr(`sig:${g.kind}`, i === 0)}>
+    <summary><strong>${esc(KIND[g.kind])}</strong> <span class="pill ${SEVERITY[g.severity] || ''}">${g.items.length}</span></summary>
+    ${g.items.map((s) => `<div class="signal-row"><div>${esc(s.text)}</div>
+      ${s.action ? `<div class="srow-act"><span class="pill ${SEVERITY[s.action.severity] || ''}">${esc(s.action.label)}</span> ${dispatchControl(s)}</div>` : ''}</div>`).join('')}
+  </details>`).join('');
 }
 
 function reasons(m) {
