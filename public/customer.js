@@ -142,7 +142,7 @@ handlers['c-submit'] = async () => {
   form.busy = true;
   hooks.render();
   const out = await act(() => api('POST', '/api/requests', {
-    room: form.room, skuId: sku.id, issues: [...form.issues], chips: [...form.chips], ...(form.followsId ? { followsId: form.followsId } : {}),
+    room: form.room, skuId: sku.id, issues: [...form.issues], chips: [...form.chips],
     styleAxes: form.issues.includes('another_style') ? [...form.styleAxes] : [], text,
   }));
   form.busy = false;
@@ -156,15 +156,21 @@ handlers['c-submit'] = async () => {
   }
 };
 
-/** The delivered items of a request that have not been reported again yet. */
-const remainingItems = (r) => (r?.onTheWay?.items || []).map((i) => i.itemId)
-  .filter((id) => getSku(id) && !S.derived.requests.some((x) => x.followsId === r.id && x.skuId === id));
+/** The delivered items of a request that have not been reported yet. */
+const remainingItems = (r) => (r?.reportable || []).filter((id) => getSku(id));
+
+/** What to call an item the team brought: its size and cut as it differs from the garment it was brought for. */
+const broughtName = (r, id) => {
+  const base = getSku(r.baseOf?.[id]) || getSku(r.skuId);
+  const sku = getSku(id);
+  return base && sku ? tripItemName(base, sku) : itemName(id);
+};
 
 /** "Still not right": a form to pick which of the delivered items to report (one or several), and what is wrong. */
 function startFollowUp(id) {
   const r = S.derived.byId[id];
   const left = remainingItems(r);
-  if (!r || r.deliveredTs == null || !left.length || !(isOpen(r) || r.outcome === 'continued')) return;
+  if (!r || r.status !== 'on_the_way' || r.deliveredTs == null || !left.length) return;
   Object.assign(form, { ...blank(), room: r.room, followsId: id, followItems: new Set(left.length === 1 ? left : []) }); // one item left: nothing to choose
 }
 
@@ -174,15 +180,15 @@ async function submitFollowUps() {
   const text = (document.getElementById('c-text')?.value || '').trim();
   form.busy = true;
   hooks.render();
-  const out = await act(() => api('POST', `/api/requests/${form.followsId}/follow-ups`, {
+  const out = await act(() => api('POST', `/api/requests/${form.followsId}/rounds`, {
     items, issues: [...form.issues], chips: [...form.chips], styleAxes: form.issues.includes('another_style') ? [...form.styleAxes] : [], text,
   }));
   form.busy = false;
-  if (out?.requestIds?.length) {
-    const room = form.room;
+  if (out?.round) {
+    const [room, id] = [form.room, form.followsId];
     resetForm(); form.room = room;
     const t = document.getElementById('c-text'); if (t) t.value = '';
-    location.hash = `#customer/${out.requestIds[0]}`;
+    location.hash = `#customer/${id}`; // the same request, now on its next attempt
   } else {
     toast('Could not send the request — please try again');
     hooks.render();
@@ -236,7 +242,6 @@ function followUpView() {
   const original = S.derived.byId[form.followsId];
   const items = remainingItems(original);
   if (!original || !items.length) return '<div class="card"><h3>Nothing left to report</h3><button class="btn primary" data-action="c-new">New request</button></div>';
-  const base = getSku(original.skuId);
   const kind = styleKind(getSku(items[0]).category);
   const picked = items.filter((id) => form.followItems.has(id));
   const ready = picked.length > 0 && form.issues.length > 0 && !form.busy;
@@ -246,7 +251,7 @@ function followUpView() {
     <div class="roombar"><span>📍 <strong>Room ${esc(original.room)}</strong></span></div>
 
     <h2>${items.length > 1 ? 'Tap each one that is still not right' : 'The one that is still not right'}</h2>
-    <div class="opts">${items.map((id) => opt('c-pick', id, base ? tripItemName(base, getSku(id)) : itemName(id), form.followItems.has(id))).join('')}</div>
+    <div class="opts">${items.map((id) => opt('c-pick', id, broughtName(original, id), form.followItems.has(id))).join('')}</div>
     <div class="small muted">${items.length > 1 ? 'The ones you leave out, we leave as they are. ' : ''}You can report the rest later, with a different issue.</div>
 
     ${issueSection(STYLE_AXES[kind] || [])}
@@ -310,23 +315,15 @@ function stepper(r, steps, cancelled) {
 /** The live "what is coming" box: waiting, checking stock, then every item on the trip. */
 function incoming(r) {
   if (r.status === 'cancelled') return `<div class="banner alert">You cancelled this request ${esc(STAGE_TEXT[r.cancelStage] || '')}. Nothing more is needed.</div>`;
-  if (r.status === 'closed' && r.outcome === 'continued') {
-    const next = S.derived.requests.filter((x) => x.followsId === r.id);
-    const base = getSku(r.skuId);
-    const links = next.map((x) => `<a href="#customer/${esc(x.id)}">${esc(base && getSku(x.skuId) ? tripItemName(base, getSku(x.skuId)) : 'See it')}</a>`).join(' · ');
-    return `<div class="incoming done">We're on it with your new request${next.length > 1 ? 's' : ''}. ${links}</div>
-      ${remainingItems(r).length ? `<button class="btn block" style="margin-top:8px" data-action="c-another" data-v="${esc(r.id)}">Report another item from this delivery</button>` : ''}`;
-  }
   if (r.status === 'closed') return '<div class="incoming done">All done. Thanks for letting us help.</div>';
   if (r.status === 'requested') return '<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>';
   if (r.status === 'accepted' || !r.onTheWay) return '<div class="incoming wait"><span class="spin"></span>Checking stock…</div>';
 
-  const orig = getSku(r.skuId);
   const trip = r.onTheWay.items.map((i) => ({ sku: getSku(i.itemId), id: i.itemId })).filter((x) => x.sku);
   const many = trip.length > 1;
   const item = ({ sku, id }) => {
     const why = r.suggestion ? choiceSummary(optionFor(r.suggestion, id)) : null;
-    return `<div class="bitem"><strong>${esc(orig ? tripItemName(orig, sku) : itemName(id))}</strong>
+    return `<div class="bitem"><strong>${esc(broughtName(r, id))}</strong>
       <div class="small muted">${esc(itemName(id))}</div>${why ? `<div class="small">Chosen for ${esc(why)}</div>` : ''}</div>`;
   };
   return `<div class="incoming bring">
@@ -361,7 +358,7 @@ function others(r, list) {
   return `<h2>Also open in Room ${esc(r.room)}</h2>${rest.map((x) => `
     <a class="card tap compact" href="#customer/${esc(x.id)}">
       <div class="row"><strong>Request ${list.indexOf(x) + 1} of ${list.length}</strong><span class="pill ok">${esc(x.status === 'requested' ? 'Waiting' : x.status === 'accepted' ? 'Accepted' : 'On the way')}</span></div>
-      <div class="small muted">${esc(itemName(x.skuId))} · ${esc(issuesText(x))}</div>
+      <div class="small muted">${esc(x.cur.skuIds.map(itemName).join(' + '))} · ${esc(issuesText(x.cur))}${x.round > 1 ? ` · attempt ${x.round}` : ''}</div>
     </a>`).join('')}`;
 }
 
@@ -377,15 +374,24 @@ function tracker(id) {
   const open = isOpen(r);
   const list = roomOpen(r.room);
   const idx = list.findIndex((x) => x.id === r.id);
-  const area = r.chips.length ? r.chips.map(cap).join(', ')
-    : (r.parsed && r.parsed.primary_area !== 'other/unknown' ? cap(r.parsed.primary_area) : '');
-  const issueTxt = `${issuesText(r)}${area && r.issue !== 'check_stock' ? ` · ${area}` : ''}${r.styleAxes?.length ? ` · ${r.styleAxes.map(cap).join(', ')}` : ''}`;
+  const cur = r.cur; // the attempt in progress
+  const area = cur.chips.length ? cur.chips.map(cap).join(', ')
+    : (cur.parsed && cur.parsed.primary_area !== 'other/unknown' ? cap(cur.parsed.primary_area) : '');
+  const issueTxt = `${issuesText(cur)}${area && cur.issue !== 'check_stock' ? ` · ${area}` : ''}${cur.styleAxes?.length ? ` · ${cur.styleAxes.map(cap).join(', ')}` : ''}`;
+  const itemTxt = r.round > 1
+    ? `Attempt ${r.round}: ${cur.skuIds.map((id) => broughtName(r, id)).join(' + ')}${sku ? ` · ${sku.name}` : ''}`
+    : (sku ? `${prefix(sku)}${sku.colour} ${sku.name} · ${sku.size} ${sku.cut}` : '');
+  const history = r.pastRounds.map((p, i) => {
+    const reported = (r.pastRounds[i + 1]?.baselineIds ?? (i === r.pastRounds.length - 1 ? cur.skuIds : [])).map((id) => broughtName(r, id));
+    return `<div>Attempt ${p.n}: ${p.items.length ? esc(p.items.map((id) => broughtName(r, id)).join(' · ')) : 'nothing brought'}${reported.length ? ` — you said ${esc(reported.join(' + '))} ${reported.length > 1 ? 'were' : 'was'} still not right` : ''}</div>`;
+  }).join('');
   return `
     <div class="roombar"><span>📍 <strong>Room ${esc(r.room)}</strong></span><span>${open && list.length > 1 ? `<span class="muted small">Request ${idx + 1} of ${list.length}</span> ` : ''}<button class="link-btn" data-action="c-leave" data-room="${esc(r.room)}">I'm done with this room</button></span></div>
     <div class="card order">
       ${stepper(r, customerSteps(r), cancelled)}
-      <div class="item-pill"><strong>${esc(sku ? `${prefix(sku)}${sku.colour} ${sku.name} · ${sku.size} ${sku.cut}` : '')}</strong>
+      <div class="item-pill"><strong>${esc(itemTxt)}</strong>
         <span class="pill">${esc(issueTxt)}</span></div>
+      ${history ? `<div class="small muted attempts">${history}</div>` : ''}
       ${incoming(r)}
     </div>
     <div class="secondary">

@@ -67,6 +67,11 @@ function lastAssignedTs(derived, staffId) {
 export function pickAssignee(item, tier, ctx) {
   const role = item.route?.role;
   const holding = new Set(item.assignments.map((a) => a.staffId).filter(Boolean));
+  // A new attempt on a request goes back to the person who handled the last one, if they can take it: they know the customer.
+  if (tier === 'primary' && item.previousOwnerStaffId) {
+    const prev = ctx.roster.find((s) => s.id === item.previousOwnerStaffId);
+    if (prev && prev.onShift && prev.type === role && ctx.isActive(prev.id) && !holding.has(prev.id)) return prev;
+  }
   const ranked = ctx.roster
     .filter((s) => s.onShift && s.type === role && ctx.isActive(s.id) && !holding.has(s.id))
     .map((s) => ({ s, listed: s.primary.includes(item.skill) ? 'primary' : s.secondary.includes(item.skill) ? 'secondary' : null }))

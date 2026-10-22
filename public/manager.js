@@ -79,7 +79,7 @@ function attention(m) {
   if (!items.length) return '';
   return `<h2 style="color:var(--danger)">Needs attention — ${plural(items.length, 'escalation')} open</h2>
     ${items.map((x) => `<div class="card attn">
-      <div class="row"><strong>${x.kind === 'task' ? `Floor pull → Room ${esc(x.room)}` : `Room ${esc(x.room)} · ${esc(issuesText(x))}`}</strong>${timerHtml(x)}</div>
+      <div class="row"><strong>${x.kind === 'task' ? `Floor pull → Room ${esc(x.room)}` : `Room ${esc(x.room)} · ${esc(issuesText(x.cur ?? x))}${x.round > 1 ? ` · attempt ${x.round}` : ''}`}</strong>${timerHtml(x)}</div>
       <div class="small">${x.kind === 'task' ? `${esc(itemName(x.itemId))} · rack ${esc(x.rack)}` : esc(itemName(x.skuId))}</div>
       <div class="small muted">${esc(STAGE_LABEL[x.escalatedStage] || 'Escalated')} · ${x.assistedNow ? `${esc(roleLabel(x.assistedBy))} stepped in at ${esc(fmtClock(x.assistedTs))}` : 'nobody has stepped in yet'}</div>
     </div>`).join('')}`;
@@ -95,7 +95,6 @@ function funnel(m) {
     <div class="funnel" role="img" aria-label="Outcomes of ${f.total} closed requests">${f.segments.map((s) => `<i style="width:${s.pct}%;background:${FUNNEL_COLOURS[s.key]}" title="${esc(outcomeLabel(s.key))}: ${s.count}"></i>`).join('')}</div>
     <div class="flegend">${f.segments.map((s) => `<span><i style="background:${FUNNEL_COLOURS[s.key]}"></i>${esc(outcomeLabel(s.key))} <strong>${s.count}</strong> (${Math.round(s.pct)}%)</span>`).join('')}</div>
     ${f.cancelled ? `<div class="small muted" style="margin-top:6px">+ ${f.cancelled} cancelled by the customer (not part of the bar)</div>` : ''}
-    ${m.continued ? `<div class="small muted" style="margin-top:6px">+ ${m.continued} continued in a follow-up request (counted by how the follow-up ended)</div>` : ''}
   </div>`;
 }
 

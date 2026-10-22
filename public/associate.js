@@ -166,8 +166,16 @@ const statusPill = (x) => {
   return { requested: '<span class="pill accent">New</span>', accepted: '<span class="pill ok">Accepted</span>', on_the_way: x.deliveredTs != null ? '<span class="pill ok">Trying on</span>' : '<span class="pill ok">On the way</span>', closed: `<span class="pill">${esc(outcomeLabel(x.outcome))}</span>` }[x.status];
 };
 
+/** What the attempt in progress is about: the items the customer named, and what is wrong with them. */
+const issuesNow = (x) => issuesText(x.cur ?? x);
+const itemNow = (x) => (x.cur?.skuIds ?? [x.skuId]).map(itemName).join(' + ');
+const curSku = (x) => getSku((x.cur?.skuIds ?? [x.skuId])[0]);
+const attemptPill = (x) => (x.round > 1 ? `<span class="pill accent">Attempt ${x.round}</span>` : '');
+/** The item of the customer's that a brought item was chosen for. */
+const baseFor = (r, o, s = r.suggestion) => getSku(s ? optionFor(s, o.id)?.forId : null) || getSku(r.baseOf?.[o.id]) || curSku(r);
+
 function assistCard(x) {
-  const what = x.kind === 'task' ? 'Floor stock pull' : `${issuesText(x)} · ${itemName(x.skuId)}`;
+  const what = x.kind === 'task' ? 'Floor stock pull' : `${issuesNow(x)} · ${itemNow(x)}`;
   return `<div class="card urgent qcard">${ringHtml(x, 52)}<div class="qmain">
     <div class="row"><strong>Room ${esc(x.room)}</strong>${timerHtml(x, 'plain')}</div>
     <div class="small">${esc(what)}</div>
@@ -177,7 +185,7 @@ function assistCard(x) {
 
 /** An escalated item in your own queue: only who, where and how long. Tap to act. */
 function urgentCard(x) {
-  const what = x.kind === 'task' ? `Floor pull · ${(x.items || []).length > 1 ? `${x.items.length} items` : itemName(x.itemId)}` : `${issuesText(x)} · ${itemName(x.skuId)}`;
+  const what = x.kind === 'task' ? `Floor pull · ${(x.items || []).length > 1 ? `${x.items.length} items` : itemName(x.itemId)}` : `${issuesNow(x)} · ${itemNow(x)}`;
   return `<div class="card tap urgent qcard" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x, 52)}<div class="qmain">
     <div class="row"><strong>Room ${esc(x.room)}</strong>${timerHtml(x, 'plain')}</div>
     <div class="small">${esc(what)} <span class="muted">· ${esc(stageText(x))}</span></div>${roomBadge(x) ? `<div class="pills">${roomBadge(x)}</div>` : ''}</div><span class="open-cta">Open ›</span></div>`;
@@ -213,7 +221,7 @@ function queue(role, who) {
     ${items.some((x) => !x.escalated) ? items.filter((x) => !x.escalated).map(queueCard).join('') : (items.length ? '' : '<div class="card muted">No open requests. New ones appear here automatically.</div>')}
     ${closed.length ? `<h2>Recently finished</h2>${closed.map((r) => `
       <div class="card tap" data-action="a-open" data-v="${esc(r.id)}">
-        <div class="row"><span>Room ${esc(r.room)} · ${esc(issuesText(r))}</span>${statusPill(r)}</div>
+        <div class="row"><span>Room ${esc(r.room)} · ${esc(issuesNow(r))}</span>${statusPill(r)}</div>
         <div class="small muted">${r.status === 'cancelled' ? `Customer cancelled ${esc(STAGE_TEXT[r.cancelStage] || '')}` : SAVE_OUTCOMES.includes(r.outcome) ? 'Sale saved' : r.reasons.length ? 'Reason recorded' : 'Tap to add why it did not convert'}</div>
       </div>`).join('')}` : ''}`;
 }
@@ -239,9 +247,9 @@ function queueCard(x) {
   }
   const target = x.suggestion?.itemId ? getSku(x.suggestion.itemId) : null;
   return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
-    <div class="row"><strong>${esc(issuesText(x))}</strong>${timerHtml(x, 'plain')}</div>
-    <div class="small muted">${esc(itemName(x.skuId))}</div>
-    <div class="pills">${roomBadge(x)}${x.followsId ? '<span class="pill">Follow-up</span>' : ''}${carryover(x) ? '<span class="pill accent">💡 Fit carryover</span>' : ''}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
+    <div class="row"><strong>${esc(issuesNow(x))}</strong>${timerHtml(x, 'plain')}</div>
+    <div class="small muted">${esc(itemNow(x))}</div>
+    <div class="pills">${roomBadge(x)}${attemptPill(x)}${carryover(x) ? '<span class="pill accent">💡 Fit carryover</span>' : ''}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
 }
 
 // ---------- floor task ----------
@@ -296,7 +304,7 @@ function requestDetail(r, role) {
 function urgentDetail(r, role) {
   const ids = suggestionItemIds(r.suggestion);
   const opts = ids.map((id) => getSku(id)).filter(Boolean);
-  const sku = getSku(r.skuId);
+  const sku = curSku(r);
   const pre = r.status === 'requested';
   const onWay = r.status === 'on_the_way';
   const open = r.status === 'accepted' || onWay;
@@ -309,22 +317,22 @@ function urgentDetail(r, role) {
     action = `<button class="btn primary block xl" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="customer_declined">Customer declined — show next best</button>`;
   } else if (r.suggestionState === 'shown' && opts.length) {
     action = `<div class="trip-head">Bring${opts.length > 1 ? ` these ${opts.length}` : ''}</div>
-      ${opts.map((o) => `<div class="bring-line"><span><strong>${esc(optionName(sku, o))}</strong></span>${rackPill(o.rack)}</div>`).join('')}
+      ${opts.map((o) => `<div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o), o))}</strong></span>${rackPill(o.rack)}</div>`).join('')}
       <button class="btn primary block xl" style="margin-top:12px" data-action="a-confirm" data-v="${esc(r.id)}">Confirm &amp; bring${opts.length > 1 ? ` all ${opts.length}` : ''}</button>`;
   } else if (stage3) {
-    action = `${trip.length ? `<div class="trip-head">${r.deliveredTs != null ? 'Handed over' : 'On the way'}: ${esc(trip.map((o) => optionName(sku, o)).join(' · '))}</div>` : ''}${onWay ? tripEnd(r) : closeBlock(r)}`;
+    action = `${trip.length ? `<div class="trip-head">${r.deliveredTs != null ? 'Handed over' : 'On the way'}: ${esc(trip.map((o) => optionName(baseFor(r, o), o)).join(' · '))}</div>` : ''}${onWay ? tripEnd(r) : closeBlock(r)}`;
   }
   return `
     <div class="head">${ringHtml(r, 64)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')} <span class="esc-tag">ESCALATED</span></div></div>
-    <div class="subhead"><span>${esc(itemName(r.skuId))} · <strong>${esc(issuesText(r))}</strong></span></div>
+    <div class="subhead"><span>${esc(itemNow(r))} · <strong>${esc(issuesNow(r))}</strong></span></div>
     <div class="small muted">${esc(stageText(r))}${r.assistedNow ? ` · ${esc(roleLabel(r.assistedBy))} is assisting` : ''}</div>
     <div class="urgent-action">${action}</div>
     <details class="sec" data-sec="full:${esc(r.id)}" ${openAttr(`full:${r.id}`, false)}><summary>Full details</summary>${normalDetail(r, role, false)}</details>`;
 }
 
 function normalDetail(r, role, withHead) {
-  const sku = getSku(r.skuId);
-  const info = mergeIssue({ sku, issue: r.issue, issues: r.issues, chips: r.chips, parsed: r.parsed, parseMethod: r.method });
+  const sku = curSku(r);
+  const info = mergeIssue({ sku, issue: r.cur.issue, issues: r.cur.issues, chips: r.cur.chips, styleAxes: r.cur.styleAxes, parsed: r.cur.parsed, parseMethod: r.cur.method });
   const open = r.status === 'accepted' || r.status === 'on_the_way';
   const pre = r.status === 'requested';
   // The card follows the physical step. Step 1 (accepted): locate / confirm the item. Step 2 (on the way): one
@@ -338,9 +346,9 @@ function normalDetail(r, role, withHead) {
   const showReason = r.status === 'closed' && !SAVE_OUTCOMES.includes(r.outcome);
   return `
     ${withHead ? `<div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}</div></div>
-    <div class="subhead"><span>${esc(itemName(r.skuId))}</span>${statusPill(r)}</div>` : ''}
+    <div class="subhead"><span>${esc(itemNow(r))}</span>${attemptPill(r)}${statusPill(r)}</div>` : ''}
     ${withHead ? escBanner(r) : ''}
-    ${r.followsId && withHead ? '<div class="banner info"><strong>Follow-up.</strong> The customer was brought this item and said it is still not right. Start from it, not from the garment they first asked about.</div>' : ''}
+    ${r.round > 1 && withHead ? `<div class="banner info"><strong>Attempt ${r.round}.</strong> The customer tried what was brought and said ${esc(itemNow(r))} ${r.cur.skuIds.length > 1 ? 'are' : 'is'} still not right (${esc(issuesNow(r))}). Everything already brought is left out of the suggestion.</div>` : ''}
     ${(() => { const c = carryover(r); return c ? `<div class="banner info">💡 <strong>Fit carryover.</strong> ${esc(c.text)} <span class="small muted">A hint from this room visit, not a profile.</span></div>` : ''; })()}
     ${r.itemDeclined ? `<div class="banner alert"><strong>Customer says: not this one.</strong> Don't bring ${esc(itemName(r.itemDeclined.itemId))}. Show the next best below.</div>` : ''}
     ${r.status === 'cancelled' ? `<div class="banner alert"><strong>Cancelled by the customer</strong> ${esc(STAGE_TEXT[r.cancelStage] || '')}. No further action is needed.</div>` : ''}
@@ -369,17 +377,18 @@ const BADGES = {
 const badge = (...srcs) => [...new Set(srcs)].map((x) => BADGES[x] || '').join(' ');
 
 function issuePanel(r, info) {
-  const chipTxt = r.chips.length ? r.chips.join(', ') : 'none';
-  const p = r.parsed;
-  const parseSrc = r.method === 'rule_fallback' ? 'rule_fallback' : 'ai_parsed';
+  const c = r.cur; // the attempt in progress
+  const chipTxt = c.chips.length ? c.chips.join(', ') : 'none';
+  const p = c.parsed;
+  const parseSrc = c.method === 'rule_fallback' ? 'rule_fallback' : 'ai_parsed';
   const pairRow = (label, area, word) => `<div class="row"><span>${label}: <strong>${esc(area)} · ${esc(word)}</strong></span>${badge(parseSrc)}</div>`;
   const used = (t, name) => !t ? '' : `<div class="row"><span>${name}: <strong>${esc(t.area)} — ${esc(t.word)}</strong></span>
     <span>${t.wordSource ? badge(t.wordSource, t.areaSource) : badge(t.source)}</span></div>`;
   return `<div class="card stack">
-    ${p ? `<div class="${r.method === 'rule_fallback' ? 'src fallback' : 'src'}">${esc(methodLabel(r.method))}</div>` : ''}
-    <div class="row"><span>${r.issues.length > 1 ? 'Issues' : 'Issue'}: <strong>${esc(issuesText(r))}</strong></span>${badge('customer_tapped')}</div>
-    ${r.issue === 'another_style'
-      ? `<div class="row"><span>Style details asked: <strong>${r.styleAxes.length ? esc(r.styleAxes.map((a) => STYLE_AXIS_LABELS[a]).join(', ')) : 'any'}</strong></span>${badge('customer_tapped')}</div>`
+    ${p ? `<div class="${c.method === 'rule_fallback' ? 'src fallback' : 'src'}">${esc(methodLabel(c.method))}</div>` : ''}
+    <div class="row"><span>${c.issues.length > 1 ? 'Issues' : 'Issue'}: <strong>${esc(issuesText(c))}</strong></span>${badge('customer_tapped')}</div>
+    ${c.issue === 'another_style'
+      ? `<div class="row"><span>Style details asked: <strong>${c.styleAxes.length ? esc(c.styleAxes.map((a) => STYLE_AXIS_LABELS[a]).join(', ')) : 'any'}</strong></span>${badge('customer_tapped')}</div>`
       : `<div class="row"><span>Body-area chips: <strong>${esc(chipTxt)}</strong></span>${badge('customer_tapped')}</div>`}
     ${p ? `${pairRow('Main', p.primary_area, p.primary_issue)}
            ${p.secondary_area !== 'other/unknown' || p.secondary_issue !== 'other/unknown' ? pairRow('Also', p.secondary_area, p.secondary_issue) : ''}
@@ -440,6 +449,17 @@ function selection(r) {
 
 const optionName = (sku, alt) => tripItemName(sku, alt);
 
+/** One comparison table per item of the customer's that something was chosen for (usually just one). */
+function comparisons(r, s, opts, sku) {
+  const groups = new Map();
+  for (const o of opts) {
+    const base = baseFor(r, o, s) || sku;
+    if (!groups.has(base.id)) groups.set(base.id, { base, list: [] });
+    groups.get(base.id).list.push(o);
+  }
+  return [...groups.values()].map(({ base, list }) => `${groups.size > 1 ? `<div class="small muted" style="margin-top:8px">Compared with ${esc(itemName(base.id))}</div>` : ''}${comparisonTable(base, list, { diffs: optionFor(s, list[0].id)?.diffs ?? s.diffs })}`).join('');
+}
+
 /** Every measurement of what the customer has on beside every item to bring. Nothing is singled out as "the" change. */
 function comparisonTable(sku, opts, s) {
   const roles = Object.fromEntries((s.diffs || []).map((d) => [d.measure, d.role]));
@@ -462,13 +482,16 @@ function suggestionBlock(r, sku, role, compact = false) {
   let body = '';
 
   if (hasItem) {
-    if (opts.length === 1) body += changeBanner(s, sku, opts[0]);
+    if (opts.length === 1) body += changeBanner(s, baseFor(r, opts[0], s) || sku, opts[0]);
+    for (const n of (s.perBaseline || []).filter((x) => (s.baselines || []).length > 1 && !['alternative', 'alternative_size', 'alternative_style', 'stock_check'].includes(x.kind))) {
+      body += `<div class="banner info"><strong>${esc(itemName(n.forId))}:</strong> ${esc(n.reason)}</div>`; // a picked item with nothing in stock
+    }
     body += `<div class="trip-head">${opts.length > 1 ? `Bring these ${opts.length} in one trip` : 'Bring'}</div>`;
     body += opts.map((o) => {
       const why = choiceSummary(optionFor(s, o.id));
       return `<div class="optrow ${canAct && !sel.has(o.id) ? 'off' : ''}">
-        ${canAct ? `<input type="checkbox" class="optbox" aria-label="Bring ${esc(optionName(sku, o))}" data-action="a-toggle" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${sel.has(o.id) ? 'checked' : ''}>` : ''}
-        <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(sku, o))}</strong></span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
+        ${canAct ? `<input type="checkbox" class="optbox" aria-label="Bring ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-toggle" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${sel.has(o.id) ? 'checked' : ''}>` : ''}
+        <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong></span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
           <div class="small muted">${esc(skuLabel(o))}${reported(o.id) ? ` · ${onRecord(o.id)} on record, ${reported(o.id)} reported missing` : ''}</div>
           ${why && opts.length > 1 ? `<div class="small">${esc(cap1(why))}</div>` : ''}</div>
         ${isOpenReq && !r.itemDeclined && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}
@@ -477,7 +500,7 @@ function suggestionBlock(r, sku, role, compact = false) {
     if (opts.length > 1 && s.kind === 'alternative_style') {
       body += '<div class="small muted">Each is a different design in your size. See the notes above for what differs.</div>';
     }
-    body += comparisonTable(sku, opts, s);
+    body += comparisons(r, s, opts, sku);
     if (s.reason && opts.length === 1) body += `<p>${esc(s.reason)}</p>`;
   } else {
     body += `<div class="banner ${s.kind === 'alteration_or_crossstore' ? 'info' : 'alert'}"><strong>${esc(s.reason)}</strong></div>`;
@@ -494,7 +517,7 @@ function suggestionBlock(r, sku, role, compact = false) {
   const fallbackN = (s.excluded?.length || 0) + 1;
   const isFallback = fallbackN > 1;
   const fallbackHead = isFallback
-    ? `<div class="fallback-head">Fallback #${fallbackN}: ${hasItem ? `<strong>${esc(opts.map((o) => optionName(sku, o)).join(' · '))}</strong> ${rackPill(opts[0].rack, `${stockNow(opts[0].id)} left`)}` : 'no in-stock alternative'}</div>` : '';
+    ? `<div class="fallback-head">Fallback #${fallbackN}: ${hasItem ? `<strong>${esc(opts.map((o) => optionName(baseFor(r, o, s) || sku, o)).join(' · '))}</strong> ${rackPill(opts[0].rack, `${stockNow(opts[0].id)} left`)}` : 'no in-stock alternative'}</div>` : '';
   const struckHtml = struck.length ? `<div class="chips-struck">${struck.join('')}</div>` : '';
 
   const tripItems = r.onTheWay?.items?.map((i) => i.itemId) || [];
@@ -513,11 +536,11 @@ function suggestionBlock(r, sku, role, compact = false) {
     return `<h2>On the way</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}
       <div class="trip-head">Bringing ${trip.length > 1 ? `${trip.length} items` : 'this item'} to Room ${esc(r.room)}</div>
-      ${trip.map((o) => `<div class="optrow"><div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(sku, o))}</strong></span>${rackPill(o.rack)}</div>
+      ${trip.map((o) => `<div class="optrow"><div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong></span>${rackPill(o.rack)}</div>
         <div class="small muted">${esc(skuLabel(o))}</div></div>
         <button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button></div>`).join('')}
       ${struckHtml}
-      <details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}><summary>All measurements</summary>${trip.length ? comparisonTable(sku, trip, s) : ''}</details>
+      <details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}><summary>All measurements</summary>${trip.length ? comparisons(r, s, trip, sku) : ''}</details>
       ${pullBtn}${tasks}
     </div>`;
   }
@@ -560,18 +583,18 @@ function tripEnd(r) {
 }
 
 function closeBlock(r) {
-  // When more than one item was brought, "bought alternative" names the one that was kept: one tap each. That is also what
-  // lets the next request from the same room use what this customer's fit turned out to be.
-  const orig = getSku(r.skuId);
-  const trip = (r.onTheWay?.items || []).filter((i) => getSku(i.itemId));
-  const buttons = Object.entries(OUTCOMES).flatMap(([k, v]) => (k === 'bought_alternative' && trip.length > 1
-    ? trip.map((i) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}" data-item="${esc(i.itemId)}">Bought ${esc(orig ? tripItemName(orig, getSku(i.itemId)) : itemName(i.itemId))}</button>`)
+  // When more than one item could be the one kept (everything brought and not reported, from any attempt), "bought alternative"
+  // names it: one tap each. That is also what lets the next request from the same room use what this customer's fit turned out to be.
+  const kept = r.keepable.filter((id) => getSku(id));
+  const label = (id) => { const b = getSku(r.baseOf?.[id]) || getSku(r.skuId); return b ? tripItemName(b, getSku(id)) : itemName(id); };
+  const buttons = Object.entries(OUTCOMES).flatMap(([k, v]) => (k === 'bought_alternative' && kept.length > 1
+    ? kept.map((id) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}" data-item="${esc(id)}">Bought ${esc(label(id))}</button>`)
     : [`<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}">${esc(v)}</button>`]));
   return `<h2>Outcome</h2><div class="btn-grid">${buttons.join('')}</div>`;
 }
 
 /** What an earlier purchase in the same room visit suggests for this request (a hint, never a decision). */
-const carryover = (r) => (r.kind === 'request' && ['requested', 'accepted'].includes(r.status)
+const carryover = (r) => (r.kind === 'request' && r.round === 1 && ['requested', 'accepted'].includes(r.status)
   ? carryoverFor(r, S.derived, effectiveCatalogue(CATALOGUE, S.derived.discrepancies), S.config || {}) : null);
 
 function reasonBlock(r) {

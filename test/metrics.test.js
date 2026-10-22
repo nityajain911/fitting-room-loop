@@ -399,18 +399,6 @@ test('delivery is accept to handed over; set-off and try-on times are separate; 
   assert.equal(m.delivered, 2);
 });
 
-test('a request continued in a follow-up is not a lost sale and not a sale: it leaves the save-rate denominator', () => {
-  const { events, add } = makeLog();
-  mk(add, 'first', 0); add(1, 'first', 'accepted', { role: 'runner' });
-  add(2, 'first', 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' }); add(3, 'first', 'delivered', {}, 'runner');
-  add(4, 'first', 'closed', { outcome: 'continued', followedBy: 'second' });
-  mk(add, 'second', 5, { followsId: 'first' }); add(6, 'second', 'accepted', { role: 'runner' }); add(7, 'second', 'closed', { outcome: 'bought_alternative' });
-  const m = computeMetrics(events);
-  assert.equal(m.closed, 1);
-  assert.equal(m.saveRate, 1);       // the chain counted once, by how it ended
-  assert.equal(m.continued, 1);
-  assert.equal(m.followUps, 1);
-});
 
 // ---------- restock tasks and signals ----------
 const missingOnRack = (add, id, ts, skuId = 'OX-M-REG', rack = 'A4') => {
@@ -472,4 +460,50 @@ test('hand-overs are counted by who did them', () => {
   const trip = (id, who) => { mk(add, id, 0); add(1, id, 'accepted', { role: 'runner' }); add(2, id, 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'x' }); add(3, id, 'delivered', {}, who); };
   trip('a', 'runner'); trip('b', 'floor'); trip('c', 'floor');
   assert.deepEqual(computeMetrics(events).deliveredBy, { runner: 1, floor: 2 });
+});
+
+// ---------- attempts (rounds) ----------
+const twoRounds = (add, id, close = true) => {
+  mk(add, id, 0); add(10_000, id, 'accepted', { role: 'runner' });
+  add(20_000, id, 'on_the_way', { room: 2, itemId: 'OX-M-REG', itemLabel: 'a', items: [{ itemId: 'OX-M-REG', itemLabel: 'a', forId: 'OX-L-SLIM' }, { itemId: 'OX-XL-SLIM', itemLabel: 'b', forId: 'OX-L-SLIM' }] });
+  add(40_000, id, 'delivered', {}, 'runner');
+  add(50_000, id, 'tryon_feedback', { result: 'not_right' }, 'customer');
+  add(60_000, id, 'round_opened', { baselineIds: ['OX-M-REG'], issue: 'too_loose', issues: ['too_loose'], chips: ['waist'], styleAxes: [], parsed: null, method: 'none' }, 'customer');
+  add(100_000, id, 'accepted', { role: 'runner' });
+  add(110_000, id, 'on_the_way', { room: 2, itemId: 'OX-L-REG', itemLabel: 'c', items: [{ itemId: 'OX-L-REG', itemLabel: 'c', forId: 'OX-M-REG' }] });
+  add(150_000, id, 'delivered', {}, 'floor');
+  if (close) add(200_000, id, 'closed', { outcome: 'bought_alternative', itemId: 'OX-L-REG' });
+};
+
+test('the headline times come from the first attempt; later attempts are counted separately', () => {
+  const { events, add } = makeLog();
+  twoRounds(add, 'a');
+  const m = computeMetrics(events);
+  assert.equal(m.medianAcceptMs, 10_000);        // created -> first accept
+  assert.equal(m.medianDeliverMs, 30_000);       // first attempt: accept 10 s -> handed over 40 s
+  assert.equal(m.medianDispatchMs, 10_000);      // accept 10 s -> on the way 20 s
+  assert.deepEqual([m.total, m.closed, m.saves, m.saveRate], [1, 1, 1, 1]);   // one request, one outcome
+  assert.deepEqual([m.retried, m.savedAfterRetry, m.rounds], [1, 1, 2]);
+  assert.deepEqual(m.deliveredBy, { runner: 1, floor: 1 });
+  assert.deepEqual(m.tryOn, { fits: 0, notRight: 1 });
+  assert.equal(m.medianTryOnMs, 50_000);         // last handed over 150 s -> closed 200 s
+});
+
+test('every attempt counts: items brought in either one are demand, and fit reports of later baselines are plotted', () => {
+  const { events, add } = makeLog();
+  twoRounds(add, 'a'); twoRounds(add, 'b');
+  const m = computeMetrics(events, undefined, cfg);
+  const high = m.signals.filter((x) => x.kind === 'high_demand').map((x) => x.skuId).sort();
+  assert.deepEqual(high, ['OX-L-REG', 'OX-M-REG', 'OX-XL-SLIM']);              // each brought twice, across both attempts
+  const rows = m.heatmap.rows.map((r) => r.label);
+  assert.ok(rows.includes('Oxford Shirt · Regular'));                          // the second attempt's baseline (M Regular) too loose
+  const reg = m.heatmap.rows.find((r) => r.label === 'Oxford Shirt · Regular');
+  assert.deepEqual(reg.cells.waist, { more: 0, less: 2 });
+});
+
+test('a request that is still in its second attempt is open, not closed, and counted once', () => {
+  const { events, add } = makeLog();
+  twoRounds(add, 'a', false);
+  const m = computeMetrics(events);
+  assert.deepEqual([m.total, m.closed, m.retried, m.savedAfterRetry], [1, 0, 1, 0]);
 });

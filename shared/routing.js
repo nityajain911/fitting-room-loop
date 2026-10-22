@@ -28,7 +28,9 @@ const rankOf = (x) => (x.taskType === 'restock' ? 4 : x.kind === 'task' ? TASK_R
 /** Open requests/tasks for a role, ordered by type rank, then longest waiting first. */
 export function buildQueue(role, derived, now) {
   const items = [...derived.requests, ...derived.tasks].filter((x) => x.route?.role === role && isOpen(x));
-  return items.sort((a, b) => rankOf(a) - rankOf(b) || a.createdTs - b.createdTs || (a.id < b.id ? -1 : 1));
+  // Waiting time counts from when this attempt started (a second attempt waits from its own start).
+  const since = (x) => x.roundStartTs ?? x.createdTs;
+  return items.sort((a, b) => rankOf(a) - rankOf(b) || since(a) - since(b) || (a.id < b.id ? -1 : 1));
 }
 
 /** Most recently finished (closed or cancelled) customer requests for a role, newest first. */

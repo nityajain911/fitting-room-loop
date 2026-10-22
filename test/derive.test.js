@@ -518,16 +518,13 @@ test('an escalation of the delivery stage clears when the item is handed over, n
   assert.equal(deriveAll(events).byId.r1.escalated, false);
 });
 
-test('a withdrawn trip is not delivered; try-on feedback and follow-ups are derived', () => {
+test('a withdrawn trip is not delivered; try-on feedback is derived', () => {
   const { events, add } = makeLog();
   onWay(add);
   add(30_000, 'r1', 'delivered', {}, 'runner');
   add(60_000, 'r1', 'tryon_feedback', { result: 'not_right' }, 'customer');
-  add(70_000, 'r2', 'created', { room: 1, skuId: 'OX-M-REG', issue: 'too_loose', chips: [], parsed: null, method: 'none', followsId: 'r1' }, 'customer');
   const d = deriveAll(events);
   assert.deepEqual([d.byId.r1.tryOn.result, d.byId.r1.tryOn.ts], ['not_right', 60_000]);
-  assert.equal(d.byId.r2.followsId, 'r1');
-  assert.equal(d.byId.r1.tryOn && d.byId.r2.tryOn, null);
   add(80_000, 'r1', 'inventory_discrepancy', { skuId: 'OX-M-REG', rack: 'A4' });
   assert.equal(deriveAll(events).byId.r1.deliveredTs, null);           // nothing is on its way any more
 });
@@ -621,13 +618,88 @@ test('who handed the items over is remembered, and a pull cancelled because of i
   assert.deepEqual([d.byId.t1.status, d.byId.t1.cancelReason], ['cancelled', 'handed_over']);
 });
 
-test('a request knows which follow-ups continued it', () => {
+
+// ---------- attempts (rounds) inside one request ----------
+const tripOf = (items) => items.map((itemId) => ({ itemId, itemLabel: itemId, forId: 'OX-L-SLIM' }));
+const firstRound = (add, id = 'r1') => {
+  add(0, id, 'created', { room: 1, skuId: 'OX-L-SLIM', issue: 'too_tight', issues: ['too_tight'], chips: ['chest'], parsed: null, method: 'none' }, 'customer');
+  add(0, id, 'routed', { role: 'runner', rule: 'x' });
+  add(10_000, id, 'accepted', { role: 'runner', staffId: 's_a', tier: 'primary' }, 'runner');
+  add(20_000, id, 'on_the_way', { room: 1, itemId: 'OX-M-REG', itemLabel: 'a', items: tripOf(['OX-M-REG', 'OX-XL-SLIM', 'OX-L-REG']) }, 'runner');
+  add(30_000, id, 'delivered', {}, 'runner');
+};
+const open2 = (add, id = 'r1', baselineIds = ['OX-M-REG', 'OX-XL-SLIM']) => add(60_000, id, 'round_opened', {
+  baselineIds, issue: 'too_loose', issues: ['too_loose'], chips: ['chest'], styleAxes: [], parsed: null, method: 'none',
+}, 'customer');
+
+test('opening a second attempt keeps the same request: it goes back to waiting, with the new description and its own clocks', () => {
   const { events, add } = makeLog();
-  onWay(add);
-  add(30_000, 'r1', 'delivered', {}, 'runner');
-  add(40_000, 'a', 'created', { room: 1, skuId: 'OX-M-REG', issue: 'too_loose', chips: [], parsed: null, method: 'none', followsId: 'r1' }, 'customer');
-  add(41_000, 'b', 'created', { room: 1, skuId: 'OX-XL-REG', issue: 'too_long', chips: [], parsed: null, method: 'none', followsId: 'r1' }, 'customer');
+  firstRound(add);
+  assert.deepEqual([deriveAll(events).byId.r1.round, deriveAll(events).byId.r1.cur.skuIds], [1, ['OX-L-SLIM']]);
+  open2(add);
   const d = deriveAll(events);
-  assert.deepEqual(d.byId.r1.followUps, ['a', 'b']);
-  assert.deepEqual(d.byId.a.followUps, []);
+  const r = d.byId.r1;
+  assert.equal(d.requests.length, 1);                                        // no second request
+  assert.deepEqual([r.round, r.status, r.roundStartTs, r.roundAcceptedTs], [2, 'requested', 60_000, null]);
+  assert.equal(r.acceptedTs, 10_000);                                        // the first accept is kept for the headline numbers
+  assert.deepEqual([r.cur.skuIds, r.cur.issue, r.cur.chips], [['OX-M-REG', 'OX-XL-SLIM'], 'too_loose', ['chest']]);
+  assert.deepEqual([r.onTheWay, r.deliveredTs, r.suggestion, r.tryOn], [null, null, null, null]);
+  assert.equal(r.createdTs, 0);                                              // still the same request, with the same start
+  assert.equal(r.skuId, 'OX-L-SLIM');                                        // what they first asked about
+  assert.deepEqual(r.pastRounds.map((x) => [x.n, x.baselineIds, x.deliveredTs, x.items]), [[1, ['OX-L-SLIM'], 30_000, ['OX-M-REG', 'OX-XL-SLIM', 'OX-L-REG']]]);
+  assert.equal(r.previousOwnerStaffId, 's_a');
+  assert.equal(r.acceptedStaffId, null);
+  // the clocks start again
+  assert.equal(stageOf(r), 'accept');
+  assert.equal(timerFor(r, 70_000, config).startTs, 60_000);
+  add(75_000, 'r1', 'accepted', { role: 'runner', staffId: 's_a', tier: 'primary' }, 'runner');
+  const r2 = deriveAll(events).byId.r1;
+  assert.deepEqual([r2.status, r2.roundAcceptedTs, r2.acceptedTs], ['accepted', 75_000, 10_000]);
+  assert.equal(timerFor(r2, 80_000, config).startTs, 75_000);                // delivery clock from this round's accept
+});
+
+test('the items reported are used up; the others can still be reported; nothing already tried is offered again', () => {
+  const { events, add } = makeLog();
+  firstRound(add);
+  assert.deepEqual(deriveAll(events).byId.r1.reportable, ['OX-M-REG', 'OX-XL-SLIM', 'OX-L-REG']);
+  open2(add);
+  const r = deriveAll(events).byId.r1;
+  assert.deepEqual(r.reportable, ['OX-L-REG']);                              // the one they left out
+  assert.deepEqual([...excludedIds(r)].sort(), ['OX-L-REG', 'OX-L-SLIM', 'OX-M-REG', 'OX-XL-SLIM']); // the original and everything brought
+  assert.deepEqual(Object.keys(r.baseOf).sort(), ['OX-L-REG', 'OX-M-REG', 'OX-XL-SLIM']);
+});
+
+test('a new attempt is assigned afresh, and an escalation can happen once per attempt', () => {
+  const { events, add } = makeLog();
+  firstRound(add);
+  add(15_000, 'r1', 'assigned', { tier: 'primary', staffId: 's_a' });
+  add(125_000, 'r1', 'escalated', { level: 1, stage: 'deliver' });
+  assert.deepEqual(deriveAll(events).byId.r1.escalations.map((x) => [x.stage, x.round]), [['deliver', 1]]);
+  open2(add);
+  const r = deriveAll(events).byId.r1;
+  assert.deepEqual([r.assignments, r.openToAll, r.escalated], [[], false, false]);
+  add(200_000, 'r1', 'accepted', { role: 'runner', staffId: 's_a', tier: 'primary' }, 'runner');
+  add(330_000, 'r1', 'escalated', { level: 1, stage: 'deliver' });
+  assert.deepEqual(deriveAll(events).byId.r1.escalations.map((x) => [x.stage, x.round]), [['deliver', 1], ['deliver', 2]]);
+});
+
+test('a round can only be opened once the items were handed over', () => {
+  const { events, add } = makeLog();
+  add(0, 'r1', 'created', { room: 1, skuId: 'OX-L-SLIM', issue: 'too_tight', chips: [], parsed: null, method: 'none' }, 'customer');
+  add(1, 'r1', 'routed', { role: 'runner', rule: 'x' });
+  add(2, 'r1', 'accepted', { role: 'runner' }, 'runner');
+  open2(add);
+  assert.equal(deriveAll(events).byId.r1.round, 1);
+});
+
+test('the kept item can be any item that was delivered and not reported, from any attempt', () => {
+  const { events, add } = makeLog();
+  firstRound(add);
+  open2(add);
+  add(70_000, 'r1', 'accepted', { role: 'runner' }, 'runner');
+  add(80_000, 'r1', 'on_the_way', { room: 1, itemId: 'OX-L-SLIM', itemLabel: 'a', items: tripOf(['OX-XXL-REG']) }, 'runner');
+  add(85_000, 'r1', 'delivered', {}, 'runner');
+  add(90_000, 'r1', 'closed', { outcome: 'bought_alternative', itemId: 'OX-L-REG' }, 'runner'); // the one left from the first attempt
+  assert.equal(deriveAll(events).byId.r1.keptItemId, 'OX-L-REG');
+  assert.deepEqual(deriveAll(events).byId.r1.keepable.sort(), ['OX-L-REG', 'OX-XXL-REG']);
 });

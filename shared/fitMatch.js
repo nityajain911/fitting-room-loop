@@ -357,6 +357,44 @@ export function fitMatch({ sku, issueInfo, catalogue, config, excludeIds = [] })
   return { ...out, kind: 'no_alternative', drivers: driverOnly, reason: NO_ALT };
 }
 
+/**
+ * One suggestion for an attempt about several of the customer's items. For each picked item the engine has given its own
+ * suggestion; the trip takes the best option for each item first, then the next best of each, never the same item twice,
+ * up to the trip size. Every option says which item it is for (`forId`). An item with nothing in stock does not block the
+ * others and is reported in `perBaseline`.
+ */
+export function combineSuggestions(perBaseline, K) {
+  const optionsOf = (s) => (s.options?.length ? s.options : s.itemId ? [{ itemId: s.itemId }] : []);
+  const lists = perBaseline.map(({ baseId, s }) => optionsOf(s).map((o) => ({ ...o, forId: baseId })));
+  const summary = perBaseline.map(({ baseId, s }) => ({ forId: baseId, kind: s.kind, reason: s.reason }));
+  const baselines = perBaseline.map((x) => x.baseId);
+  if (perBaseline.length === 1) {
+    const { s } = perBaseline[0];
+    return { ...s, ...(lists[0].length ? { options: lists[0] } : {}), baselines, perBaseline: summary };
+  }
+  const chosen = [];
+  const seen = new Set();
+  for (let i = 0; chosen.length < K; i += 1) {
+    let any = false;
+    for (const list of lists) {
+      if (i >= list.length) continue;
+      any = true;
+      const o = list[i];
+      if (!seen.has(o.itemId) && chosen.length < K) { seen.add(o.itemId); chosen.push(o); }
+    }
+    if (!any) break;
+  }
+  if (!chosen.length) return { ...perBaseline[0].s, baselines, perBaseline: summary, originalId: baselines[0] };
+  const lead = perBaseline.find((x) => optionsOf(x.s).length).s;
+  const kinds = new Set(perBaseline.filter((x) => optionsOf(x.s).length).map((x) => x.s.kind));
+  const missed = summary.filter((x) => !lists[baselines.indexOf(x.forId)].length);
+  return {
+    ...lead, kind: kinds.size === 1 ? lead.kind : 'alternative', itemId: chosen[0].itemId, options: chosen,
+    originalId: baselines[0], baselines, perBaseline: summary,
+    reason: [lead.reason, ...missed.map((x) => `Nothing found for ${x.forId}: ${x.reason}`)].filter(Boolean).join('. '),
+  };
+}
+
 /** Customer-facing wording for one measurement change, e.g. {waist, +6} -> "a roomier waist". */
 export function describeChange({ measure, delta }) {
   const up = delta > 0;

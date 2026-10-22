@@ -1,8 +1,8 @@
 // Every dashboard number is computed here from the event list. Nothing is hardcoded or stored.
-import { deriveAll, isOpen } from './derive.js';
+import { deriveAll, isOpen, roundsOf } from './derive.js';
 import { CATALOGUE, getSku, skuLabel } from './catalogue.js';
 import { mergeIssue } from './fitMatch.js';
-import { OUTCOMES, CONTINUED, SAVE_OUTCOMES, EVIDENCE_TYPES, ISSUES, FIT_ISSUES } from './events.js';
+import { OUTCOMES, SAVE_OUTCOMES, EVIDENCE_TYPES, ISSUES, FIT_ISSUES } from './events.js';
 import { DEFAULTS } from './config.js';
 
 export function median(nums) {
@@ -19,8 +19,8 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
   const tasks = allTasks.filter((t) => t.taskType !== 'restock'); // customer floor pulls
   const restockTasks = allTasks.filter((t) => t.taskType === 'restock'); // dispatched from the Manager
 
-  const continuedReqs = requests.filter((r) => r.status === 'closed' && r.outcome === CONTINUED);
-  const closedReqs = requests.filter((r) => r.status === 'closed' && r.outcome !== CONTINUED);
+  const closedReqs = requests.filter((r) => r.status === 'closed');
+  const rounds = new Map(requests.map((r) => [r.id, roundsOf(r)])); // every attempt of every request, in order
   const saves = closedReqs.filter((r) => SAVE_OUTCOMES.includes(r.outcome)).length;
   const deferred = closedReqs.filter((r) => r.outcome === 'saved_for_later').length;
 
@@ -83,12 +83,15 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
   // (not on rack, declined) and cancelled requests do not count.
   const deliveries = {};
   for (const r of requests) {
-    if (r.onTheWay && r.status !== 'cancelled') {
-      for (const i of r.onTheWay.items) {
-        if ((r.onTheWayTs ?? 0) > (replenished[i.itemId] ?? -1)) deliveries[i.itemId] = (deliveries[i.itemId] || 0) + 1; // since the last restock
+    if (r.status === 'cancelled') continue;
+    for (const rd of rounds.get(r.id)) { // every attempt's trip counts: it is demand
+      for (const id of rd.items) {
+        if ((rd.onTheWayTs ?? 0) > (replenished[id] ?? -1)) deliveries[id] = (deliveries[id] || 0) + 1; // since the last restock
       }
     }
   }
+  const firstRound = (r) => rounds.get(r.id)[0];
+  const allRounds = [...rounds.values()].flat();
 
   return {
     total: requests.length,
@@ -102,14 +105,16 @@ export function computeMetrics(events, catalogue = CATALOGUE, cfg = DEFAULTS) {
     saveRate: ratio(saves, closedReqs.length),
     deferredRate: ratio(deferred, closedReqs.length),
     medianAcceptMs: median(requests.filter((r) => r.acceptedTs != null).map((r) => r.acceptedTs - r.createdTs)),
-    medianDeliverMs: median(requests.filter((r) => r.acceptedTs != null && r.deliveredTs != null).map((r) => r.deliveredTs - r.acceptedTs)),
-    medianDispatchMs: median(requests.filter((r) => r.acceptedTs != null && r.onTheWayTs != null).map((r) => r.onTheWayTs - r.acceptedTs)),
+    // The headline response times are the first attempt's: a second attempt is the customer's try-on result, not slowness.
+    medianDeliverMs: median(requests.map(firstRound).filter((d) => d.acceptedTs != null && d.deliveredTs != null).map((d) => d.deliveredTs - d.acceptedTs)),
+    medianDispatchMs: median(requests.map(firstRound).filter((d) => d.acceptedTs != null && d.onTheWayTs != null).map((d) => d.onTheWayTs - d.acceptedTs)),
     medianTryOnMs: median(closedReqs.filter((r) => r.deliveredTs != null).map((r) => r.closedTs - r.deliveredTs)),
-    delivered: requests.filter((r) => r.deliveredTs != null).length,
-    deliveredBy: { runner: requests.filter((r) => r.deliveredBy === 'runner').length, floor: requests.filter((r) => r.deliveredBy === 'floor').length },
-    tryOn: { fits: requests.filter((r) => r.tryOn?.result === 'fits').length, notRight: requests.filter((r) => r.tryOn?.result === 'not_right').length },
-    continued: continuedReqs.length,
-    followUps: requests.filter((r) => r.followsId).length,
+    delivered: requests.filter((r) => rounds.get(r.id).some((d) => d.deliveredTs != null)).length,
+    deliveredBy: { runner: allRounds.filter((d) => d.deliveredBy === 'runner').length, floor: allRounds.filter((d) => d.deliveredBy === 'floor').length },
+    tryOn: { fits: allRounds.filter((d) => d.tryOn?.result === 'fits').length, notRight: allRounds.filter((d) => d.tryOn?.result === 'not_right').length },
+    rounds: allRounds.length,
+    retried: requests.filter((r) => r.round > 1).length, // needed another attempt
+    savedAfterRetry: closedReqs.filter((r) => r.round > 1 && SAVE_OUTCOMES.includes(r.outcome)).length,
     medianCloseMs: median(closedReqs.map((r) => r.closedTs - r.createdTs)),
     escalations: requests.filter((r) => r.escalations.length).length,
     floorTaskEscalations: tasks.filter((t) => t.escalations.length).length,
@@ -245,19 +250,23 @@ export const HEATMAP_COLUMNS = [...HEATMAP_AREAS, 'general']; // "general": the 
 function buildHeatmap(requests, catalogue) {
   const rows = new Map();
   for (const r of requests) {
-    if (!FIT_ISSUES.includes(r.issue)) continue;
-    const sku = getSku(r.skuId, catalogue);
-    if (!sku) continue;
-    const info = mergeIssue({ sku, issue: r.issue, issues: r.issues, chips: r.chips, parsed: r.parsed, parseMethod: r.method });
-    const targets = (info.issues.length > 1 ? [info.primary, info.secondary] : [info.primary]).filter(Boolean);
-    const label = `${sku.name} · ${sku.cut}`;
-    if (!rows.has(label)) rows.set(label, { label, cells: Object.fromEntries(HEATMAP_COLUMNS.map((a) => [a, { more: 0, less: 0 }])), total: 0 });
-    const row = rows.get(label);
-    for (const t of targets) {
-      // An area that was only assumed is not plotted as if it were stated: it goes to the "general" column.
-      const column = (t.areaSource ?? t.source) === 'default' ? 'general' : t.area;
-      row.cells[column][['tight', 'short'].includes(t.word) ? 'more' : 'less'] += 1;
-      row.total += 1;
+    for (const rd of roundsOf(r)) { // every attempt, and every item the customer named in it
+      if (!FIT_ISSUES.includes(rd.issue)) continue;
+      for (const baseId of rd.baselineIds) {
+        const sku = getSku(baseId, catalogue);
+        if (!sku) continue;
+        const info = mergeIssue({ sku, issue: rd.issue, issues: rd.issues, chips: rd.chips, parsed: rd.parsed, parseMethod: rd.method });
+        const targets = (info.issues.length > 1 ? [info.primary, info.secondary] : [info.primary]).filter(Boolean);
+        const label = `${sku.name} · ${sku.cut}`;
+        if (!rows.has(label)) rows.set(label, { label, cells: Object.fromEntries(HEATMAP_COLUMNS.map((a) => [a, { more: 0, less: 0 }])), total: 0 });
+        const row = rows.get(label);
+        for (const t of targets) {
+          // An area that was only assumed is not plotted as if it were stated: it goes to the "general" column.
+          const column = (t.areaSource ?? t.source) === 'default' ? 'general' : t.area;
+          row.cells[column][['tight', 'short'].includes(t.word) ? 'more' : 'less'] += 1;
+          row.total += 1;
+        }
+      }
     }
   }
   const list = [...rows.values()].sort((a, b) => b.total - a.total || (a.label < b.label ? -1 : 1));

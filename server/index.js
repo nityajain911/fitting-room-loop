@@ -9,11 +9,11 @@ import { makeLlm } from './llm.js';
 import { makeConfig } from '../shared/config.js';
 import { CATALOGUE, CATALOGUE_LABEL, getSku, skuLabel } from '../shared/catalogue.js';
 import { computeMetrics } from '../shared/metrics.js';
-import { ISSUES, CHIPS, OUTCOMES, CONTINUED, TRYON_RESULTS, RESTOCK_KINDS, RESTOCK_SIGNAL, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
+import { ISSUES, CHIPS, OUTCOMES, TRYON_RESULTS, RESTOCK_KINDS, RESTOCK_SIGNAL, ROLES, ALL_STYLE_AXES, SAVE_OUTCOMES, normaliseIssues } from '../shared/events.js';
 import { routeFor } from '../shared/routing.js';
 import { deriveAll, isOpen, effectiveCatalogue, excludedIds, stageOf, stageStart, stageLimits, ownerRole } from '../shared/derive.js';
 import { normaliseStaff, MAX_STAFF, nextAssignment, accessFor } from '../shared/staffing.js';
-import { mergeIssue, fitMatch, suggestionItemIds } from '../shared/fitMatch.js';
+import { mergeIssue, fitMatch, combineSuggestions, optionFor, suggestionItemIds } from '../shared/fitMatch.js';
 import { parseCustomerText, parseReasonText, validateReason } from '../shared/parser.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -144,11 +144,15 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   const suggest = (id) => {
     const d = derived();
     const r = d.byId[id];
-    const sku = getSku(r.skuId, catalogue);
-    const issueInfo = mergeIssue({ sku, issue: r.issue, issues: r.issues, chips: r.chips, styleAxes: r.styleAxes, parsed: r.parsed, parseMethod: r.method });
-    return fitMatch({
-      sku, issueInfo, catalogue: effectiveCatalogue(catalogue, d.discrepancies), config: cfg(), excludeIds: excludedIds(r),
+    const cur = r.cur; // the attempt in progress: its items and what is wrong with them
+    const live = effectiveCatalogue(catalogue, d.discrepancies);
+    const excludeIds = excludedIds(r); // missing on the rack, declined, and (from the second attempt) everything already tried
+    const perItem = cur.skuIds.map((baseId) => {
+      const sku = getSku(baseId, catalogue);
+      const issueInfo = mergeIssue({ sku, issue: cur.issue, issues: cur.issues, chips: cur.chips, styleAxes: cur.styleAxes, parsed: cur.parsed, parseMethod: cur.method });
+      return { baseId, s: fitMatch({ sku, issueInfo, catalogue: live, config: cfg(), excludeIds }) };
     });
+    return combineSuggestions(perItem, Math.min(5, Math.max(1, Math.floor(cfg().bringCount ?? 3))));
   };
 
   app.get('/health', (_req, res) => res.send('ok'));
@@ -260,69 +264,51 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
   };
 
   /** Append `created` and `routed` for one request. The first issue is the main one: routing and labels use it. */
-  const createRequest = ({ roomNum, skuId, issues, chips, styleAxes, parsed, followsId = null }) => {
+  const createRequest = ({ roomNum, skuId, issues, chips, styleAxes, parsed }) => {
     const id = rid('r');
     const issue = issues[0];
     append(id, 'created', 'customer', {
       room: roomNum, skuId, issue, issues, chips: [...new Set(chips)], parsed: parsed.fields, method: parsed.method,
       styleAxes: issue === 'another_style' ? [...new Set(styleAxes)] : [], // style details only mean something for "Another style"
-      ...(followsId ? { followsId } : {}),
     });
     const route = routeFor(issue);
     append(id, 'routed', 'system', { role: route.role, rule: route.rule });
     return id;
   };
 
-  /**
-   * "Still not right": the delivered items a customer can report again. The request must have been handed over and be
-   * either still on its way (the try-on) or already continued by an earlier report. Each delivered item can be reported once.
-   */
-  const followableItems = (original) => {
-    if (!original || original.kind !== 'request' || original.deliveredTs == null) return null;
-    if (!(original.status === 'on_the_way' || (original.status === 'closed' && original.outcome === CONTINUED))) return null;
-    const taken = new Set(derived().requests.filter((x) => x.followsId === original.id).map((x) => x.skuId));
-    return (original.onTheWay?.items || []).map((i) => i.itemId).filter((id) => !taken.has(id));
-  };
-
   app.post('/api/requests', async (req, res) => {
     const roomNum = Number(req.body?.room);
-    const { skuId, followsId = null } = req.body || {};
+    const { skuId } = req.body || {};
     if (!Number.isInteger(roomNum) || roomNum < 1 || roomNum > 99) throw bad('room must be a number 1-99');
     if (!getSku(skuId, catalogue)) throw bad('Unknown garment');
     const fields = readRequestFields(req.body);
-
-    // A follow-up to a request whose items were handed over, in the same room, about one of those items.
-    let followed = null;
-    if (followsId != null) {
-      followed = derived().byId[followsId];
-      if (!followed || followed.room !== roomNum || !followableItems(followed)?.includes(skuId)) throw bad('That request cannot be continued');
-    }
-
     // The raw text is parsed and dropped; only the structured result is logged.
     const parsed = await parseCustomerText(fields.text, llmFor(req));
-    const id = createRequest({ roomNum, skuId, ...fields, parsed, followsId });
-    // The earlier request is carried on by this one: it is closed as "continued", so the result is counted once.
-    if (followed && followed.status === 'on_the_way') append(followed.id, 'closed', 'system', { outcome: CONTINUED, followedBy: id });
+    const id = createRequest({ roomNum, skuId, ...fields, parsed });
     assignPending();
     res.json({ requestId: id, method: parsed.method });
   });
 
-  // The customer picks which of the delivered items are still not right (one or several) and says what is wrong: one
-  // follow-up request per item, each starting from that item, so each gets its own suggestion. The note is read once.
-  app.post('/api/requests/:id/follow-ups', async (req, res) => {
-    const original = derived().byId[req.params.id];
-    if (!original || original.kind !== 'request') throw missing('Request not found');
+  // "Still not right": the SAME request starts another attempt, for the delivered items the customer picks (one or
+  // several), with what is wrong. Nothing new is created to track: one request, one timeline, one outcome. It goes
+  // back to waiting (to the same runner first), with its own clocks, and gets a suggestion for each picked item.
+  app.post('/api/requests/:id/rounds', async (req, res) => {
+    const r = derived().byId[req.params.id];
+    if (!r || r.kind !== 'request') throw missing('Request not found');
+    if (r.status !== 'on_the_way' || r.deliveredTs == null) throw conflict('Items can be reported once they have been handed over');
+    if (r.tryOn?.result === 'fits') throw conflict('You already told us it fits');
     const items = req.body?.items;
     if (!Array.isArray(items) || !items.length || items.length > 5 || new Set(items).size !== items.length) throw bad('Pick between 1 and 5 different items');
-    const open = followableItems(original);
-    if (!open) throw bad('That request cannot be continued');
-    if (items.some((id) => !open.includes(id))) throw bad('Those items cannot be reported (not delivered, or already reported)');
+    if (items.some((id) => !r.reportable.includes(id))) throw bad('Those items cannot be reported (not delivered, or already reported)');
     const fields = readRequestFields(req.body);
     const parsed = await parseCustomerText(fields.text, llmFor(req));
-    const ids = items.map((skuId) => createRequest({ roomNum: original.room, skuId, ...fields, parsed, followsId: original.id }));
-    if (original.status === 'on_the_way') append(original.id, 'closed', 'system', { outcome: CONTINUED, followedBy: ids[0] });
+    if (!r.tryOn) append(r.id, 'tryon_feedback', 'customer', { result: 'not_right' }); // saying so is the same as answering the try-on question
+    append(r.id, 'round_opened', 'customer', {
+      baselineIds: items, issue: fields.issues[0], issues: fields.issues, chips: [...new Set(fields.chips)], parsed: parsed.fields, method: parsed.method,
+      styleAxes: fields.issues[0] === 'another_style' ? [...new Set(fields.styleAxes)] : [],
+    });
     assignPending();
-    res.json({ requestIds: ids, method: parsed.method });
+    res.json({ ok: true, round: derived().byId[r.id].round, method: parsed.method });
   });
 
   // "I'm done with this room": ends the visit. Anything still open from the room is withdrawn, so nobody carries items to
@@ -421,7 +407,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     let ids = Array.isArray(req.body?.itemIds) ? req.body.itemIds : req.body?.itemId ? [req.body.itemId] : options;
     ids = [...new Set(ids)];
     if (!ids.length || ids.some((id) => !options.includes(id))) throw conflict('Those items are not part of the suggestion');
-    const items = ids.map((id) => ({ itemId: id, itemLabel: skuLabel(getSku(id, catalogue)) }));
+    const items = ids.map((id) => ({ itemId: id, itemLabel: skuLabel(getSku(id, catalogue)), forId: optionFor(r.suggestion, id)?.forId ?? r.cur.skuIds[0] }));
     const itemLabel = items.length > 1 ? `${items[0].itemLabel} +${items.length - 1} more` : items[0].itemLabel;
     append(r.id, 'suggestion_confirmed', actorOf(req, r), { itemId: ids[0], itemIds: ids });
     append(r.id, 'on_the_way', actorOf(req, r), { room: r.room, itemId: ids[0], itemLabel, items });
@@ -519,7 +505,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     if (!(outcome in OUTCOMES)) throw bad('Unknown outcome');
     // Which of the brought items was kept, for a purchase of an alternative.
     const kept = req.body?.itemId;
-    if (kept != null && (outcome !== 'bought_alternative' || !r.onTheWay?.items?.some((i) => i.itemId === kept))) throw bad('That item cannot be recorded as the one kept');
+    if (kept != null && (outcome !== 'bought_alternative' || !r.keepable.includes(kept))) throw bad('That item cannot be recorded as the one kept'); // any item brought and not reported, from any attempt
     if (r.status === 'closed') throw conflict('Request already closed');
     if (r.status === 'cancelled') throw conflict('Request was cancelled by the customer');
     if (r.status === 'requested') throw conflict('Accept the request before closing it');
@@ -607,7 +593,7 @@ export function createApp({ store, llm = null, config: baseConfig = makeConfig()
     const d = derived();
     for (const x of [...d.requests, ...d.tasks]) {
       const stage = stageOf(x);
-      if (!stage || x.escalated || x.escalations.some((e) => e.stage === stage)) continue;
+      if (!stage || x.escalated || x.escalations.some((e) => e.stage === stage && (e.round ?? 1) === (x.round ?? 1))) continue; // once per stage, per attempt
       const { escalateSeconds } = stageLimits(cfg(), stage);
       if (t - stageStart(x, stage) >= escalateSeconds * 1000) {
         append(x.id, 'escalated', 'system', { level: 1, stage, thresholdSec: escalateSeconds });

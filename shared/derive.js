@@ -4,6 +4,21 @@
 import { CATALOGUE, getSku } from './catalogue.js';
 import { skillOf } from './skills.js';
 
+/** An attempt as it stands (used to freeze it when the next one opens, and to read all attempts uniformly). */
+const snapshotOf = (r) => ({
+  n: r.round, openedTs: r.roundStartTs, baselineIds: [...r.cur.skuIds], issue: r.cur.issue, issues: [...r.cur.issues], chips: r.cur.chips, styleAxes: r.cur.styleAxes,
+  parsed: r.cur.parsed, method: r.cur.method, acceptedTs: r.roundAcceptedTs, onTheWayTs: r.onTheWayTs, deliveredTs: r.deliveredTs, deliveredBy: r.deliveredBy,
+  items: (r.onTheWay?.items || []).map((i) => i.itemId), tryOn: r.tryOn, acceptedStaffId: r.acceptedStaffId,
+});
+
+/** Every attempt of a request, in order, the current one last. */
+export const roundsOf = (r) => [...r.pastRounds, snapshotOf(r)];
+
+/** Items the customer may still be told were kept: what is on its way now, and what was delivered and not reported. */
+function keepableOf(r) {
+  return [...new Set([...(r.onTheWay?.items || []).map((i) => i.itemId), ...r.deliveredIds.filter((id) => !r.reportedIds.includes(id))])];
+}
+
 export function deriveAll(events, catalogue = CATALOGUE) {
   const requests = [];
   const tasks = [];
@@ -23,18 +38,23 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           kind: 'request', id: e.requestId, room: p.room, skuId: p.skuId, issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue],
           chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none',
           createdTs: e.ts, sessionStartTs: rooms[p.room]?.releasedTs ?? 0, lastTs: e.ts, keptItemId: null, route: null, status: 'requested', acceptedTs: null, acceptedBy: null,
+          // Attempts ("rounds"): one request carries the customer through several tries. The fields above are the first attempt;
+          // `cur` is the description of the attempt in progress, and everything about it (status, suggestion, trip, try-on)
+          // is the current attempt's. Earlier attempts are kept, frozen, in `pastRounds`.
+          round: 1, roundStartTs: e.ts, roundAcceptedTs: null,
+          cur: { skuIds: [p.skuId], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none' },
+          pastRounds: [], triedIds: [p.skuId], deliveredIds: [], reportedIds: [], reportable: [], keepable: [], baseOf: {}, previousOwnerStaffId: null,
           skill: null, assignments: [], openToAll: false, acceptedStaffId: null, acceptedTier: null,
           closedTs: null, outcome: null, cancelledTs: null, cancelStage: null,
           escalated: false, escalatedTs: null, escalatedStage: null, escalations: [], assistLog: [], assistedNow: false,
           suggestion: null, suggestionState: null, confirmedItemId: null, confirmedItemIds: [],
-          onTheWay: null, onTheWayTs: null, deliveredTs: null, deliveredBy: null, tryOn: null, followsId: p.followsId ?? null, followUps: [], reasons: [], floorTaskIds: [],
+          onTheWay: null, onTheWayTs: null, deliveredTs: null, deliveredBy: null, tryOn: null, reasons: [], floorTaskIds: [],
           discrepancies: [], declinedIds: [], itemDeclined: null, assistedBy: null, assistedTs: null,
         };
         const sku = getSku(p.skuId, catalogue);
         r.skill = sku ? skillOf(sku) : null; // which kind of specialist the garment calls for
         byId[r.id] = r;
         requests.push(r);
-        if (p.followsId && byId[p.followsId]?.kind === 'request') byId[p.followsId].followUps.push(r.id); // carried on from an earlier request
         break;
       }
       case 'routed': {
@@ -45,7 +65,8 @@ export function deriveAll(events, catalogue = CATALOGUE) {
       case 'accepted': {
         const x = get(e.requestId);
         if (!x) break;
-        x.acceptedTs = e.ts;
+        if (x.kind === 'request') { if (x.acceptedTs == null) x.acceptedTs = e.ts; x.roundAcceptedTs = e.ts; } // the first accept is the headline; each attempt has its own
+        else x.acceptedTs = e.ts;
         x.acceptedBy = p.role;
         x.acceptedStaffId = p.staffId ?? null;
         x.acceptedTier = p.tier ?? null;
@@ -88,13 +109,36 @@ export function deriveAll(events, catalogue = CATALOGUE) {
           r.onTheWay = { room: p.room, itemId: p.itemId, itemLabel: p.itemLabel, items: p.items || [{ itemId: p.itemId, itemLabel: p.itemLabel }] };
           r.onTheWayTs = e.ts;
           r.deliveredTs = null;
+          for (const it of r.onTheWay.items) r.baseOf[it.itemId] = it.forId ?? r.cur.skuIds[0]; // which item of theirs each was brought for
           if (r.status !== 'closed' && r.status !== 'cancelled') r.status = 'on_the_way';
         }
         break;
       }
       case 'delivered': {
         const r = get(e.requestId);
-        if (r && r.kind === 'request' && r.status === 'on_the_way') { r.deliveredTs = e.ts; r.deliveredBy = e.actor ?? null; clearEscalation(r); }
+        if (r && r.kind === 'request' && r.status === 'on_the_way') {
+          r.deliveredTs = e.ts; r.deliveredBy = e.actor ?? null; clearEscalation(r);
+          for (const it of r.onTheWay?.items || []) { // the customer now has these to try: they are tried, and can be reported
+            if (!r.deliveredIds.includes(it.itemId)) r.deliveredIds.push(it.itemId);
+            if (!r.triedIds.includes(it.itemId)) r.triedIds.push(it.itemId);
+          }
+        }
+        break;
+      }
+      case 'round_opened': {
+        // "Still not right": the same request starts another attempt for the items the customer picked.
+        const r = get(e.requestId);
+        if (!r || r.kind !== 'request' || r.status !== 'on_the_way' || r.deliveredTs == null) break;
+        r.pastRounds.push(snapshotOf(r));
+        r.reportedIds.push(...p.baselineIds.filter((id) => !r.reportedIds.includes(id)));
+        r.previousOwnerStaffId = r.acceptedStaffId;
+        r.round += 1; r.roundStartTs = e.ts; r.roundAcceptedTs = null;
+        r.cur = { skuIds: [...p.baselineIds], issue: p.issue, issues: p.issues?.length ? p.issues : [p.issue], chips: p.chips || [], styleAxes: p.styleAxes || [], parsed: p.parsed || null, method: p.method || 'none' };
+        r.status = 'requested'; r.acceptedStaffId = null; r.acceptedTier = null;
+        r.suggestion = null; r.suggestionState = null; r.confirmedItemId = null; r.confirmedItemIds = [];
+        r.onTheWay = null; r.onTheWayTs = null; r.deliveredTs = null; r.deliveredBy = null; r.tryOn = null; r.itemDeclined = null;
+        r.assignments = []; r.openToAll = false; // handed out afresh (the previous person first)
+        clearEscalation(r);
         break;
       }
       case 'tryon_feedback': {
@@ -157,7 +201,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         if (x && !x.escalated) {
           const stage = p.stage || (x.status === 'requested' ? 'accept' : 'deliver'); // events from before stages existed
           x.escalated = true; x.escalatedTs = e.ts; x.escalatedStage = stage; x.assistedNow = false;
-          x.escalations.push({ stage, ts: e.ts });
+          x.escalations.push({ stage, ts: e.ts, round: x.round ?? 1 });
         }
         break;
       }
@@ -165,8 +209,8 @@ export function deriveAll(events, catalogue = CATALOGUE) {
         const r = get(e.requestId);
         if (r && r.status !== 'cancelled') {
           r.status = 'closed'; r.closedTs = e.ts; r.outcome = p.outcome;
-          // which of the brought items the customer kept: named at the close, or the only one that was brought
-          if (p.outcome === 'bought_alternative') r.keptItemId = p.itemId ?? (r.onTheWay?.items?.length === 1 ? r.onTheWay.items[0].itemId : null);
+          // which of the brought items the customer kept: named at the close, or the only one there is
+          if (p.outcome === 'bought_alternative') { const k = keepableOf(r); r.keptItemId = p.itemId ?? (k.length === 1 ? k[0] : null); }
         }
         break;
       }
@@ -222,6 +266,7 @@ export function deriveAll(events, catalogue = CATALOGUE) {
     const touched = byId[e.requestId]; // last activity, for the empty-room timeout (a pull's activity counts for its request)
     if (touched) { touched.lastTs = e.ts; if (touched.parentId && byId[touched.parentId]) byId[touched.parentId].lastTs = e.ts; }
   }
+  for (const r of requests) { r.reportable = r.deliveredIds.filter((id) => !r.reportedIds.includes(id)); r.keepable = keepableOf(r); }
   // A cancelled request takes its unfinished floor pulls with it.
   for (const t of tasks) {
     const parent = byId[t.parentId];
@@ -247,7 +292,7 @@ export function stageOf(x) {
 export const STAGE_LABEL = { accept: 'Not accepted in time', deliver: 'Not delivered in time' };
 
 /** When a stage's clock started. */
-export const stageStart = (x, stage) => (stage === 'deliver' ? x.acceptedTs ?? x.createdTs : x.createdTs);
+export const stageStart = (x, stage) => (stage === 'deliver' ? x.roundAcceptedTs ?? x.acceptedTs ?? x.createdTs : x.roundStartTs ?? x.createdTs);
 
 /** Warn and escalate marks (seconds) for a stage. Amber is a share of the stage time. */
 export function stageLimits(config, stage) {
@@ -266,7 +311,7 @@ export function timerFor(x, now, config) {
   if (x.taskType === 'restock') return { stage: null, startTs: x.createdTs, endTs: x.doneTs ?? null, warnSeconds: 1e9, escalateSeconds: 1e9 }; // never amber or red
   const stage = stageOf(x);
   if (stage) return { stage, startTs: stageStart(x, stage), endTs: null, ...stageLimits(config, stage) };
-  if (x.status === 'on_the_way') return { stage: null, startTs: x.acceptedTs ?? x.createdTs, endTs: x.deliveredTs ?? now, ...stageLimits(config, 'deliver') };
+  if (x.status === 'on_the_way') return { stage: null, startTs: x.roundAcceptedTs ?? x.acceptedTs ?? x.createdTs, endTs: x.deliveredTs ?? now, ...stageLimits(config, 'deliver') };
   return { stage: null, startTs: x.createdTs, endTs: endTs(x) ?? now, ...stageLimits(config, 'accept') };
 }
 
@@ -287,7 +332,7 @@ export function cardState(x, now, config) {
 
 export function customerSteps(req) {
   const s = req.status;
-  const reachedAccepted = req.acceptedTs != null;
+  const reachedAccepted = req.roundAcceptedTs != null; // this attempt's
   const reachedWay = !!req.onTheWay;
   const resolved = s === 'closed';
   return [
@@ -312,5 +357,5 @@ export function customerSteps(req) {
 export const effectiveCatalogue = (catalogue, counts) =>
   catalogue.map((s) => (counts[s.id] ? { ...s, stock: Math.max(0, s.stock - counts[s.id]) } : s));
 
-/** SKUs this request must not be offered again: reported missing on the rack, or declined by the customer. */
-export const excludedIds = (req) => [...new Set([...req.discrepancies.map((d) => d.skuId), ...req.declinedIds])];
+/** SKUs this request must not be offered again: reported missing on the rack, declined, and (from the second attempt) everything already tried. */
+export const excludedIds = (req) => [...new Set([...req.discrepancies.map((d) => d.skuId), ...req.declinedIds, ...(req.round > 1 ? req.triedIds : [])])];

@@ -201,6 +201,7 @@ export function describeEvent(e) {
     case 'suggestion_rejected': return 'Suggestion rejected';
     case 'on_the_way': return `On the way to Room ${p.room}`;
     case 'delivered': return `Handed to the customer by the ${roleLabel(e.actor).toLowerCase()}`;
+    case 'round_opened': return `Another attempt: ${(p.baselineIds || []).map(itemName).join(' + ')} still not right (${issuesText(p)})`;
     case 'tryon_feedback': return p.result === 'fits' ? 'Customer says it fits' : 'Customer says it is still not right';
     case 'floor_pull_requested': return `Floor pull: ${itemName(p.itemId)} (rack ${p.rack})`;
     case 'floor_pull_done': return 'Floor pull done';
