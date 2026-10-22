@@ -8,10 +8,11 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <div id="conn" class="conn" role="status" hidden>Offline, reconnecting…</div>
   <header class="topbar">
     <div class="brand">Fitting-Room Request Loop</div>
+    <button id="bell" class="bell" type="button" aria-label="Alert sound" hidden>🔔</button>
     <a class="admin-link" href="#admin">Admin</a>
-    <div id="conn" class="conn" hidden>Reconnecting…</div>
   </header>
   <div id="demo-pill" class="demo-pill" hidden></div>
   <main id="view" class="view" aria-live="polite"></main>

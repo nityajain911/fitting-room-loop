@@ -144,11 +144,15 @@ function escalationTimes(c) {
 
 const STATE_OF = (p, k) => (p.primary.includes(k) ? 'primary' : p.secondary.includes(k) ? 'secondary' : 'none');
 
-/** One link per fitting room. A tablet is opened on its link once and remembers the room: customers never pick one. */
+/** One link per device. Opened once, a device stays locked to its role (and, for a tablet, its room). */
 function tabletLinks() {
-  return `<h2>Tablets</h2><div class="card stack">
-    <div class="small muted">Open each link once on the tablet in that room. It remembers its room, and customers never choose one. To move a tablet, open the new room's link on it.</div>
-    ${FITTING_ROOMS.map((n) => `<div class="row small"><span>Room ${n}</span><a class="link" href="#customer?room=${n}" style="user-select:all">${esc(`${location.origin}/#customer?room=${n}`)}</a></div>`).join('')}
+  const link = (label, hash) => `<div class="row small"><span>${label}</span><a class="link" href="${hash}" style="user-select:all">${esc(`${location.origin}/${hash}`)}</a></div>`;
+  return `<h2>Devices</h2><div class="card stack">
+    <div class="small muted">Open a link once on the device. It stays locked to that role.</div>
+    ${FITTING_ROOMS.map((n) => link(`Room ${n} tablet`, `#customer?room=${n}&mode=customer`)).join('')}
+    ${link('Runner / floor phone', '#associate?mode=staff')}
+    ${link('Manager', '#manager?mode=manager')}
+    ${link('Unlock a device', '#customer?mode=demo')}
   </div>`;
 }
 

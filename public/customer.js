@@ -9,7 +9,8 @@ import { CATALOGUE, garments, getSku, stylesFor } from '/shared/catalogue.js';
 import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
-import { tripItemName } from '/shared/visuals.js';
+import { tripItemName, waitPhrase } from '/shared/visuals.js';
+import { typicalAcceptMs } from '/shared/metrics.js';
 
 // Each tablet lives in one fitting room, and the customer is never asked which. The prototype runs as Room 1 and does not
 // show it; a tablet can be given another room once, from its link (/#customer?room=3, one per door), and remembers it.
@@ -305,8 +306,13 @@ function incoming(r) {
   if (r.status === 'cancelled') return `<div class="banner alert">You cancelled this request ${esc(STAGE_TEXT[r.cancelStage] || '')}. Nothing more is needed.</div>`;
   if (r.status === 'closed') return '<div class="incoming done">All done. Thanks for letting us help.</div>';
   // From the second attempt on, the earlier items are still in the room: say what happens to them.
-  const swap = r.round > 1 ? '<div class="small muted" style="margin-top:8px">Keep the earlier items in your room. Your runner will swap them when bringing the next ones.</div>' : '';
-  if (r.status === 'requested') return `<div class="incoming wait"><span class="spin"></span>Waiting for a team member…</div>${swap}`;
+  const swap = r.round > 1 ? '<div class="small muted" style="margin-top:8px">Your runner will swap the earlier items.</div>' : '';
+  if (r.status === 'requested') {
+    // Reassure first: we have it. A typical wait only once there is enough history to say one; an apology once it is late.
+    const usual = waitPhrase(typicalAcceptMs(S.derived.requests));
+    return `<div class="incoming wait"><span class="spin"></span><div><strong>We've got it</strong>
+      <div class="small muted">${r.escalated ? "Sorry for the wait. A manager's been told." : usual ? `Usually ${esc(usual)}` : 'Someone will be with you shortly'}</div></div></div>${swap}`;
+  }
   if (r.status === 'accepted' && r.noMatch) {
     // The team looked and nothing in stock is close enough: say so plainly, instead of an endless spinner.
     const alteration = r.suggestion?.kind === 'alteration_or_crossstore';

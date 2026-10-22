@@ -22,7 +22,13 @@ body {
 }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px var(--gutter); max-width: 720px; margin: 0 auto; }
 .brand { font-weight: 700; letter-spacing: .2px; }
-.conn { font-size: 12px; background: var(--danger-soft); color: var(--danger); padding: 3px 8px; border-radius: 999px; }
+/* Offline: a thin bar across the top, and everything that sends something is greyed out. */
+.conn { position: sticky; top: 0; z-index: 50; text-align: center; font-size: 13px; font-weight: 700; background: var(--danger); color: #fff; padding: 4px 8px; }
+body.offline main [data-action], body.offline .actionbar button { pointer-events: none; opacity: .45; }
+.bell { background: none; border: 0; font-size: 18px; padding: 4px 8px; cursor: pointer; }
+/* A device locked to one role shows no navigation to the others. */
+body[data-mode="customer"] .tabs, body[data-mode="staff"] .tabs, body[data-mode="manager"] .tabs { display: none; }
+body[data-mode="customer"] .admin-link, body[data-mode="staff"] .admin-link { display: none; }
 .view { max-width: 720px; margin: 0 auto; padding: 0 var(--gutter) 24px; }
 h1 { font-size: 22px; margin: 6px 0 4px; }
 h2 { font-size: 15px; margin: 18px 0 8px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
@@ -305,3 +311,20 @@ a.card.compact { display: block; text-decoration: none; color: inherit; }
 .code-input { text-align: center; font-size: 28px; letter-spacing: 0.3em; text-transform: uppercase; }
 .whoami { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface-2); border-radius: 12px; padding: 10px 12px; margin: 8px 0; }
 .link-btn.danger { color: var(--danger); }
+
+/* The next step, pinned to the bottom of the screen so it is always one thumb-tap away. */
+.actionbar { position: sticky; bottom: 0; z-index: 20; margin: 16px calc(-1 * var(--gutter)) 0; padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -6px 16px rgba(0,0,0,.08); max-height: 70vh; overflow: auto; }
+body[data-mode="demo"] .actionbar { bottom: 52px; }
+.bar-row { display: flex; gap: 8px; }
+.bar-row .btn.primary { flex: 1; }
+.bar-dots { min-width: 56px; min-height: 58px; font-size: 22px; }
+.bar-more { display: grid; gap: 8px; margin-bottom: 8px; }
+.bar-out { margin-bottom: 4px; }
+.bar-cancel { display: block; margin: 6px auto 0; }
+.summary { font-size: 17px; margin: 2px 0 6px; line-height: 1.7; }
+.summary .pill { margin-left: 6px; }
+/* On a short page the bar still sits at the bottom of the screen. */
+.view:has(.actionbar) { display: flex; flex-direction: column; min-height: calc(100dvh - 130px); }
+.view:has(.actionbar) > .actionbar { margin-top: auto; }
+body[data-mode="demo"] .view:has(.actionbar) { min-height: calc(100dvh - 190px); }
+.incoming.wait strong { color: var(--text); }

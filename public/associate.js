@@ -11,14 +11,16 @@ import { suggestionItemIds, optionFor, choiceSummary } from '/shared/fitMatch.js
 import { buildQueue, buildAssistQueue, recentlyClosed } from '/shared/routing.js';
 import { isOpen, ownerRole, STAGE_LABEL, effectiveCatalogue } from '/shared/derive.js';
 import { mergeIssue } from '/shared/fitMatch.js';
-import { CATALOGUE, getSku, skuLabel, MEASURE_LABELS } from '/shared/catalogue.js';
+import { CATALOGUE, getSku, MEASURE_LABELS } from '/shared/catalogue.js';
 import { carryoverFor } from '/shared/carryover.js';
-import { STYLE_AXES, STYLE_AXIS_LABELS, styleKind, ISSUES, FIT_ISSUES, CHIPS_BY_KIND, toggleIssue } from '/shared/events.js';
+import { STYLE_AXIS_LABELS, styleKind, ISSUES, FIT_ISSUES, CHIPS_BY_KIND, toggleIssue } from '/shared/events.js';
 import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
 
 const drafts = {}; // requestId -> { fields, method, original } (AI-structured reason being edited)
 const picks = {};  // requestId -> { sig, ids: Set } the items ticked for the trip (default: all suggested items)
 let lastRole = 'runner';
+const moreOpen = {}; // requestId -> the bar's secondary actions are showing
+const closing = {};  // requestId -> the bar is showing the outcome buttons
 
 /** Who is acting, for the server: the team member this phone joined as (none when there is no roster). */
 const withStaff = (body) => (pairedId() ? { ...body, staffId: pairedId() } : body);
@@ -27,6 +29,9 @@ const go = (hash) => { location.hash = hash; };
 const post = (path, body) => act(() => api('POST', path, body));
 const rerender = () => hooks.render();
 
+handlers['a-more-toggle'] = (el) => { moreOpen[el.dataset.v] = !moreOpen[el.dataset.v]; rerender(); };
+handlers['a-close-open'] = (el) => { closing[el.dataset.v] = true; moreOpen[el.dataset.v] = false; rerender(); };
+handlers['a-close-cancel'] = (el) => { delete closing[el.dataset.v]; rerender(); };
 handlers['a-open'] = (el) => go(`#associate/${lastRole}/${el.dataset.v}`);
 handlers['a-back'] = () => go(`#associate/${lastRole}`);
 handlers['a-accept'] = (el) => post(`/api/requests/${el.dataset.v}/accept`, withStaff({ role: el.dataset.role }));
@@ -89,9 +94,10 @@ handlers['a-door-send'] = async (el) => {
 handlers['a-deliver'] = (el) => post(`/api/requests/${el.dataset.v}/deliver`, { role: lastRole });
 handlers['a-pull-cancel'] = (el) => post(`/api/tasks/${el.dataset.v}/cancel`, { role: lastRole });
 handlers['a-pull'] = (el) => post(`/api/requests/${el.dataset.v}/floor-pull`, { role: lastRole });
-handlers['a-close'] = (el) => post(`/api/requests/${el.dataset.v}/close`, { outcome: el.dataset.outcome, role: lastRole, ...(el.dataset.item ? { itemId: el.dataset.item } : {}) });
+handlers['a-close'] = (el) => { delete closing[el.dataset.v]; return post(`/api/requests/${el.dataset.v}/close`, { outcome: el.dataset.outcome, role: lastRole, ...(el.dataset.item ? { itemId: el.dataset.item } : {}) }); };
 handlers['a-left-early'] = (el) => {
   if (!confirm('Close this request as "Left"?')) return null;
+  delete closing[el.dataset.v];
   return post(`/api/requests/${el.dataset.v}/close`, { outcome: 'left', role: lastRole });
 };
 handlers['a-quick-reason'] = (el) => {
@@ -154,6 +160,21 @@ handlers['a-reason-confirm'] = async (el) => { // "Looks right"
   }
 };
 
+/** What needs this phone's owner right now (for the alert sound): requests waiting for them, and escalations. */
+export function attention() {
+  const on = rosterOn();
+  const who = on ? me() : null;
+  if (on && !who) return null;
+  const role = who ? who.type : lastRole;
+  const map = new Map();
+  for (const x of buildQueue(role, S.derived, now())) {
+    if (who && !accessFor(x, who, S.roster).visible) continue;
+    if (x.status === 'requested') map.set(x.id, !!x.escalated);
+  }
+  for (const x of buildAssistQueue(role, S.derived).offer) map.set(x.id, true);
+  return map;
+}
+
 export function render({ args }) {
   const on = rosterOn();
   const who = on ? me() : null;
@@ -207,9 +228,6 @@ const attemptPill = (x) => (x.round > 1 ? `<span class="pill accent">Attempt ${x
 /** The item of the customer's that a brought item was chosen for. */
 const baseFor = (r, o, s = r.suggestion) => getSku(s ? optionFor(s, o.id)?.forId : null) || getSku(r.baseOf?.[o.id]) || curSku(r);
 
-/** From the second attempt on, the earlier items are still in the room: remind the runner to swap them. */
-const collectBadge = (r) => (r.round > 1 && r.deliveredIds.length && ['accepted', 'on_the_way'].includes(r.status) && r.deliveredTs == null
-  ? `<div class="banner info">♻️ Room ${esc(r.room)} may still have ${r.deliveredIds.length} item${r.deliveredIds.length === 1 ? '' : 's'} from earlier attempts. Collect ${r.deliveredIds.length === 1 ? 'it' : 'them'} when you swap, and return ${r.deliveredIds.length === 1 ? 'it' : 'them'} to the rack.</div>` : '');
 
 function assistCard(x) {
   const what = x.kind === 'task' ? 'Floor stock pull' : `${issuesNow(x)} · ${itemNow(x)}`;
@@ -249,13 +267,12 @@ function queue(role, who) {
   const closed = recentlyClosed(role, S.derived);
   const { offer, assisting } = buildAssistQueue(role, S.derived);
   return `
-    ${offer.length ? `<h2 style="color:var(--danger)">Escalated — can you assist?</h2>${offer.map(assistCard).join('')}` : ''}
+    ${offer.length ? `<h2 style="color:var(--danger)">Can you help?</h2>${offer.map(assistCard).join('')}` : ''}
     ${assisting.length ? `<h2>You're assisting</h2>${assisting.map(queueCard).join('')}` : ''}
     ${items.some((x) => x.escalated) ? `<h2 style="color:var(--danger)">Needs you now</h2>${items.filter((x) => x.escalated).map(urgentCard).join('')}` : ''}
     <h1>${esc(roleLabel(role))} queue</h1>
-    <p class="muted small">Ordered by request type, then waiting time. Not by spend.</p>
-    ${withTeammates ? `<div class="banner info">${withTeammates} ${withTeammates === 1 ? 'request is' : 'requests are'} with teammates first. ${withTeammates === 1 ? 'It opens' : 'They open'} to you if not picked up.</div>` : ''}
-    ${items.some((x) => !x.escalated) ? items.filter((x) => !x.escalated).map(queueCard).join('') : (items.length ? '' : '<div class="card muted">No open requests. New ones appear here automatically.</div>')}
+    ${withTeammates ? `<div class="banner info">${withTeammates} with teammates first</div>` : ''}
+    ${items.some((x) => !x.escalated) ? items.filter((x) => !x.escalated).map(queueCard).join('') : (items.length ? '' : '<div class="card muted">Nothing waiting</div>')}
     ${closed.length ? `<h2>Recently finished</h2>${closed.map((r) => `
       <div class="card tap" data-action="a-open" data-v="${esc(r.id)}">
         <div class="row"><span>Room ${esc(r.room)} · ${esc(issuesNow(r))}</span>${statusPill(r)}</div>
@@ -291,27 +308,37 @@ function queueCard(x) {
 
 // ---------- floor task ----------
 const CANCEL_REASON = {
-  handed_over: 'The runner already handed the items to the customer.',
-  customer_declined: 'The customer declined these items.',
+  handed_over: 'Already handed to the customer.',
+  customer_declined: 'The customer declined these.',
 };
 const taskTitle = (x) => (x.taskType === 'restock' ? RESTOCK_KINDS[x.restockKind] || 'Restock' : 'Floor stock pull');
 const RESTOCK_HELP = {
-  recount: 'Count what is on the rack. If the stock record is wrong, correct it. The manager flagged it because customers found it missing.',
-  replenish: 'Top up the rack closest to the fitting rooms with this item from stock. It has been brought to the fitting rooms several times.',
+  recount: 'Count the rack and correct the record. Customers found it missing.',
+  replenish: 'Top up the rack nearest the fitting rooms.',
 };
 const RESTOCK_DONE = { recount: 'Recounted — record corrected', replenish: 'Restocked' };
+
+/** The one thing to do next, pinned to the bottom of the screen. Anything else sits behind "⋯". */
+const bar = (id, primary, more = []) => `<div class="actionbar">
+  ${more.length && moreOpen[id] ? `<div class="bar-more">${more.join('')}</div>` : ''}
+  <div class="bar-row">${primary}${more.length ? `<button class="btn bar-dots" data-action="a-more-toggle" data-v="${esc(id)}" aria-label="More actions" aria-expanded="${!!moreOpen[id]}">⋯</button>` : ''}</div></div>`;
+const barBtn = (action, id, label, extra = '') => `<button class="btn primary xl" data-action="${action}" data-v="${esc(id)}" ${extra}>${label}</button>`;
+const moreBtn = (action, id, label, extra = '') => `<button class="btn block ${extra.includes('danger') ? 'danger' : ''}" data-action="${action}" data-v="${esc(id)}" ${extra.replace('danger', '')}>${label}</button>`;
+
+function taskBar(t, doneLabel) {
+  if (t.status === 'requested') return bar(t.id, barBtn('a-task-accept', t.id, 'Accept'));
+  if (t.status === 'accepted') return bar(t.id, barBtn('a-task-done', t.id, doneLabel));
+  return '';
+}
 
 function restockDetail(t) {
   return `
     <div class="head">${ringHtml(t, 56)}<div><h1>${esc(taskTitle(t))}</h1>${timerHtml(t, 'plain')}</div></div>
     <div class="card stack">
       <div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(t.skuId))}</strong>${rackPill(t.rack)}</div></div></div>
-      <div>${esc(RESTOCK_HELP[t.restockKind] || '')}</div>
-      <div class="small muted">Sent from the Manager dashboard. No quantity is given: use your judgement on the floor.</div>
+      <div class="small">${esc(RESTOCK_HELP[t.restockKind] || '')}</div>
       ${statusPill(t)}
-      ${t.status === 'requested' ? `<button class="btn primary block" data-action="a-task-accept" data-v="${esc(t.id)}">Accept</button>` : ''}
-      ${t.status === 'accepted' ? `<button class="btn primary block" data-action="a-task-done" data-v="${esc(t.id)}">${esc(RESTOCK_DONE[t.restockKind] || 'Done')}</button>` : ''}
-    </div>`;
+    </div>${taskBar(t, esc(RESTOCK_DONE[t.restockKind] || 'Done'))}`;
 }
 
 function taskDetail(t) {
@@ -320,90 +347,78 @@ function taskDetail(t) {
     <div class="head">${ringHtml(t, 56)}<div><h1>Floor stock pull</h1>${timerHtml(t, 'plain')}</div></div>
     <div class="card stack">
       ${(t.items || []).map((i) => `<div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(i.itemId))}</strong>${rackPill(i.rack)}</div></div></div>`).join('')}
-      <div>Bring ${(t.items || []).length > 1 ? 'all' : 'it'} to Room ${esc(t.room)}</div>
-      <div class="small muted">Linked to request ${esc(t.parentId)}</div>
+      <div>To Room ${esc(t.room)}</div>
       ${t.escalated ? `<span class="esc-tag">ESCALATED</span> <span class="small muted">${esc(stageText(t))}</span>` : ''}${statusPill(t)}
-      ${t.status === 'cancelled' ? `<div class="banner info">${esc(CANCEL_REASON[t.cancelReason] || 'This pull was cancelled.')} Nothing more to do.</div>` : ''}
-      ${t.status === 'requested' ? `<button class="btn primary block" data-action="a-task-accept" data-v="${esc(t.id)}">Accept</button>` : ''}
-      ${t.status === 'accepted' ? `<button class="btn primary block" data-action="a-task-done" data-v="${esc(t.id)}">Pulled &amp; handed to customer</button>` : ''}
-    </div>`;
+      ${t.status === 'cancelled' ? `<div class="banner info">${esc(CANCEL_REASON[t.cancelReason] || 'Cancelled.')}</div>` : ''}
+    </div>${taskBar(t, 'Handed over')}`;
 }
 
 // ---------- request detail ----------
-function requestDetail(r, role) {
-  return isOpen(r) && r.escalated ? urgentDetail(r, role) : normalDetail(r, role, true);
-}
+const pullState = (r, role) => {
+  const tripItems = r.onTheWay?.items?.map((i) => i.itemId) || [];
+  const pulls = r.floorTaskIds.map((id) => S.derived.byId[id]).filter(Boolean);
+  const open = r.status === 'accepted' || r.status === 'on_the_way';
+  // Offered once the items are confirmed, and only while no pull is live or done; cancelling a pull offers it again.
+  const show = role === 'runner' && open && tripItems.length > 0 && r.deliveredTs == null && !pulls.some((t) => ['requested', 'accepted', 'done'].includes(t.status));
+  return { tripItems, pulls, show };
+};
 
-/**
- * Escalated and open: answer one question, "what do I do right now?". A pulsing ring, one line, and the single
- * action for the current step. Everything else is one tap away under "Full details".
- */
-function urgentDetail(r, role) {
-  const ids = suggestionItemIds(r.suggestion);
-  const opts = ids.map((id) => getSku(id)).filter(Boolean);
-  const sku = curSku(r);
-  const pre = r.status === 'requested';
-  const onWay = r.status === 'on_the_way';
-  const open = r.status === 'accepted' || onWay;
-  const stage3 = open && (onWay || !opts.length || r.suggestionState === 'rejected' || r.noMatch);
-  const trip = onWay ? (r.onTheWay?.items || []).map((i) => getSku(i.itemId)).filter(Boolean) : [];
-  let action = '';
-  if (pre) {
-    action = `<button class="btn primary block xl" data-action="a-accept" data-v="${esc(r.id)}" data-role="${esc(r.assistedBy === role ? role : r.route.role)}">Accept request</button>`;
-  } else if (r.itemDeclined) {
-    action = `<button class="btn primary block xl" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="customer_declined">Customer declined — show next best</button>`;
-  } else if (r.suggestionState === 'shown' && opts.length) {
-    action = `<div class="trip-head">Bring${opts.length > 1 ? ` these ${opts.length}` : ''}</div>
-      ${opts.map((o) => `<div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o), o))}</strong></span>${rackPill(o.rack)}</div>`).join('')}
-      <button class="btn primary block xl" style="margin-top:12px" data-action="a-confirm" data-v="${esc(r.id)}">Confirm &amp; bring${opts.length > 1 ? ` all ${opts.length}` : ''}</button>`;
-  } else if (stage3) {
-    action = `${trip.length ? `<div class="trip-head">${r.deliveredTs != null ? 'Handed over' : 'On the way'}: ${esc(trip.map((o) => optionName(baseFor(r, o), o)).join(' · '))}</div>` : ''}${onWay ? tripEnd(r) : closeBlock(r)}`;
+/** What to do next for this request, pinned to the bottom. Same shape for every step. */
+function requestBar(r, role) {
+  if (!isOpen(r)) return '';
+  const left = moreBtn('a-left-early', r.id, 'Customer left');
+  if (closing[r.id]) return `<div class="actionbar"><div class="bar-out">${outcomeButtons(r)}</div><button class="link-btn bar-cancel" data-action="a-close-cancel" data-v="${esc(r.id)}">Back</button></div>`;
+  if (r.status === 'requested') return bar(r.id, barBtn('a-accept', r.id, 'Accept', `data-role="${esc(r.assistedBy === role ? role : r.route.role)}"`));
+  if (r.itemDeclined) return bar(r.id, barBtn('a-next-best', r.id, 'Show next best', 'data-cause="customer_declined"'), [left]);
+  const opts = suggestionItemIds(r.suggestion).map((id) => getSku(id)).filter(Boolean);
+  const pull = pullState(r, role);
+  const pullBtn = pull.show ? [moreBtn('a-pull', r.id, `Ask floor to pull${pull.tripItems.length > 1 ? ` all ${pull.tripItems.length}` : ''}`)] : [];
+  if (r.status === 'accepted' && r.suggestionState === 'shown' && opts.length) {
+    const n = selection(r).size;
+    return bar(r.id, barBtn('a-confirm', r.id, `Bring ${n === opts.length && n > 1 ? 'all ' : ''}${n}`, n ? '' : 'disabled'), [
+      ...(role === 'runner' ? [moreBtn('a-confirm', r.id, 'Bring &amp; ask floor to pull', `data-pull="1" ${n ? '' : 'disabled'}`)] : []),
+      moreBtn('a-more', r.id, 'Other options'),
+      moreBtn('a-nomatch', r.id, 'Nothing fits', 'danger'),
+      left,
+    ]);
   }
-  return `
-    <div class="head">${ringHtml(r, 64)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')} <span class="esc-tag">ESCALATED</span></div></div>
-    <div class="subhead"><span>${esc(itemNow(r))} · <strong>${esc(issuesNow(r))}</strong></span></div>
-    <div class="small muted">${esc(stageText(r))}${r.assistedNow ? ` · ${esc(roleLabel(r.assistedBy))} is assisting` : ''}</div>
-    ${collectBadge(r)}
-    <div class="urgent-action">${action}</div>
-    <details class="sec" data-sec="full:${esc(r.id)}" ${openAttr(`full:${r.id}`, false)}><summary>Full details</summary>${normalDetail(r, role, false)}</details>`;
+  if (r.status === 'on_the_way' && r.deliveredTs == null) return bar(r.id, barBtn('a-deliver', r.id, 'Handed to customer'), [...pullBtn, left]);
+  const door = r.status === 'on_the_way' && r.onTheWay?.items?.length ? [moreBtn('a-door-open', r.id, '🔄 Another size')] : [];
+  return bar(r.id, barBtn('a-close-open', r.id, 'Close…'), [...door, left]);
 }
 
-function normalDetail(r, role, withHead) {
+function requestDetail(r, role) {
   const sku = curSku(r);
   const info = mergeIssue({ sku, issue: r.cur.issue, issues: r.cur.issues, chips: r.cur.chips, styleAxes: r.cur.styleAxes, parsed: r.cur.parsed, parseMethod: r.cur.method });
-  const open = r.status === 'accepted' || r.status === 'on_the_way';
-  const pre = r.status === 'requested';
-  // The card follows the physical step. Step 1 (accepted): locate / confirm the item. Step 2 (on the way): one
-  // summary line. Step 3: outcome and reason, once the item is on its way. Outcomes are also open when there is
-  // nothing to bring (hemming / no alternative) or the suggestion was rejected, and "customer left early" is
-  // always one small tap away.
-  const hasItem = !!(r.suggestion && (r.suggestion.itemId || r.suggestion.kind === 'stock_check'));
   const onWay = r.status === 'on_the_way';
-  const stage3 = open && (onWay || !hasItem || r.suggestionState === 'rejected' || r.noMatch);
   // Why it did not convert is only asked once the request has closed without a sale (not for sales or cancellations).
   const showReason = r.status === 'closed' && !SAVE_OUTCOMES.includes(r.outcome);
+  const p = r.cur.parsed;
+  const c = carryover(r);
+  const n = r.deliveredIds.length;
   return `
-    ${withHead ? `<div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}</div></div>
-    <div class="subhead"><span>${esc(itemNow(r))}</span>${attemptPill(r)}${statusPill(r)}</div>` : ''}
-    ${withHead ? escBanner(r) : ''}
-    ${r.round > 1 && withHead ? `<div class="banner info"><strong>Attempt ${r.round}.</strong> The customer tried what was brought and said ${esc(itemNow(r))} ${r.cur.skuIds.length > 1 ? 'are' : 'is'} still not right (${esc(issuesNow(r))}).${r.cur.reportedBy !== 'customer' ? ` Reported at the door by the ${esc(roleLabel(r.cur.reportedBy).toLowerCase())}.` : ''} Everything already brought, in any colour, is left out of the suggestion.</div>` : ''}
-    ${withHead ? collectBadge(r) : ''}
-    ${(() => { const c = carryover(r); return c ? `<div class="banner info">💡 <strong>Fit carryover.</strong> ${esc(c.text)} <span class="small muted">A hint from this room visit, not a profile.</span></div>` : ''; })()}
-    ${r.itemDeclined ? `<div class="banner alert"><strong>Customer says: not this one.</strong> Don't bring ${esc(itemName(r.itemDeclined.itemId))}. Show the next best below.</div>` : ''}
-    ${r.status === 'cancelled' ? `<div class="banner alert"><strong>Cancelled by the customer</strong> ${esc(STAGE_TEXT[r.cancelStage] || '')}. No further action is needed.</div>` : ''}
-    ${pre ? `${issueSection(r, info, true)}
-      <button class="btn primary block" style="margin-top:12px" data-action="a-accept" data-v="${esc(r.id)}" data-role="${esc(r.assistedBy === role ? role : r.route.role)}">Accept request</button>` : ''}
+    <div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}${isOpen(r) && r.escalated ? ' <span class="esc-tag">ESCALATED</span>' : ''}</div></div>
+    <div class="summary"><strong>${esc(issuesNow(r))}</strong> · ${esc(itemNow(r))} ${attemptPill(r)}${info.conflicts.length ? ' <span class="pill warn">⚠ Check</span>' : ''}${statusPill(r)}</div>
+    ${p ? `<div class="small muted">${r.cur.method === 'rule_fallback' ? '⚙' : '✨'} “${esc(p.summary_en)}”</div>` : ''}
+    ${escBanner(r)}
+    ${r.round > 1 ? `<div class="banner info">Still not right after attempt ${r.round - 1}. Earlier items are left out.</div>` : ''}
+    ${r.round > 1 && n && ['accepted', 'on_the_way'].includes(r.status) && r.deliveredTs == null ? `<div class="banner info">♻️ Swap the ${n} earlier item${n === 1 ? '' : 's'} in the room.</div>` : ''}
+    ${c ? `<div class="banner info">💡 ${esc(c.text)}</div>` : ''}
+    ${r.itemDeclined ? `<div class="banner alert">Customer said no to ${esc(itemName(r.itemDeclined.itemId))}. Show the next best.</div>` : ''}
+    ${r.status === 'cancelled' ? `<div class="banner alert">Customer cancelled ${esc(STAGE_TEXT[r.cancelStage] || '')}. Nothing more to do.</div>` : ''}
     ${r.suggestion ? suggestionBlock(r, sku, role, onWay && !r.itemDeclined) : ''}
-    ${open ? (stage3 ? (onWay ? tripEnd(r) : closeBlock(r)) : `<div style="text-align:right"><button class="back" data-action="a-left-early" data-v="${esc(r.id)}">Customer left early</button></div>`) : ''}
-    ${r.status === 'closed' ? `<div class="banner good">Closed: <strong>${esc(outcomeLabel(r.outcome))}</strong> · ${esc(fmtDur(r.closedTs - r.createdTs))} from request</div>` : ''}
-    ${!pre ? (showReason ? reasonBlock(r) : '') + issueSection(r, info, false) : ''}`;
+    ${onWay ? tripEnd(r) : ''}
+    ${r.status === 'closed' ? `<div class="banner good">${esc(outcomeLabel(r.outcome))} · ${esc(fmtDur(r.closedTs - r.createdTs))}</div>` : ''}
+    ${showReason ? reasonBlock(r) : ''}
+    ${issueSection(r, info)}
+    ${requestBar(r, role)}`;
 }
 
-/** Structured issue, collapsible. Open while the request waits to be accepted, collapsed afterwards. */
-function issueSection(r, info, pre) {
-  const key = `issue:${r.id}:${pre ? 'pre' : 'post'}`;
-  return `<details class="sec" data-sec="${esc(key)}" ${openAttr(key, pre)}>
-    <summary>Structured issue</summary>${issuePanel(r, info)}</details>`;
+/** Structured issue, one tap away. The line above it already says what matters. */
+function issueSection(r, info) {
+  const key = `issue:${r.id}`;
+  return `<details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}>
+    <summary>Details</summary>${issuePanel(r, info)}</details>`;
 }
 
 // Compact provenance badges; the legend at the foot of the panel gives the full wording.
@@ -462,18 +477,13 @@ function changeBanner(s, sku, alt) {
   if (s.kind === 'alternative_style' && s.change?.type === 'design') {
     const c = s.change;
     const changed = (c.changed || []).map((x) => `<strong>${esc(x.label.toLowerCase())}</strong>: ${esc(x.from)} → ${esc(x.to)}`).join('; ');
-    const unchanged = (STYLE_AXES[styleKind(sku.category)] || []).filter((a) => !(c.axes || []).includes(a)).map((a) => STYLE_AXIS_LABELS[a].toLowerCase());
-    const asked = (c.requested || []).map((a) => STYLE_AXIS_LABELS[a].toLowerCase());
-    return `<div class="banner info"><strong>Different style</strong>${asked.length ? ` (customer asked for: ${esc(asked.join(', '))})` : ''}: ${changed || `${esc(c.from)} → ${esc(c.to)}`}.
-      ${unchanged.length ? `${esc(cap1(unchanged.join(' and ')))} unchanged.` : ''}
-      ${(c.unmet || []).length ? `<br><strong>Could not change ${esc(c.unmet.map((a) => STYLE_AXIS_LABELS[a].toLowerCase()).join(' and '))}</strong> in size ${esc(sku.size)}.` : ''}
-      ${c.alsoCut ? `<br>${esc(alt.cut)} cut (no matching design in ${esc(sku.cut)}), so the fit changes.` : `<br>Same size and cut (${esc(sku.size)} ${esc(sku.cut)}), so the fit should stay close.`} Measurements below are for reference.</div>`;
+    return `<div class="banner info"><strong>Different style:</strong> ${changed || `${esc(c.from)} → ${esc(c.to)}`}.${(c.unmet || []).length ? ` Could not change ${esc(c.unmet.map((a) => STYLE_AXIS_LABELS[a].toLowerCase()).join(' and '))}.` : ''}${c.alsoCut ? ` ${esc(alt.cut)} cut, so the fit changes.` : ''}</div>`;
   }
   if (s.kind === 'alternative_style' && s.change?.type === 'cut') {
-    return `<div class="banner info"><strong>Same design, other cut.</strong> No other style is in stock in size ${esc(sku.size)}. The ${esc(alt.cut)} cut is the same design and changes how roomy it fits (see the table).</div>`;
+    return `<div class="banner info"><strong>Same design, ${esc(alt.cut)} cut.</strong> It fits differently.</div>`;
   }
   if (s.kind === 'alternative_size') {
-    return `<div class="banner info"><strong>Different size:</strong> ${esc(sku.size)} → ${esc(alt.size)}, same style and cut.</div>`;
+    return `<div class="banner info"><strong>Size ${esc(sku.size)} → ${esc(alt.size)}</strong></div>`;
   }
   return '';
 }
@@ -507,18 +517,14 @@ function comparisonTable(sku, opts, s) {
     ${keys.map((k) => `<tr class="${roles[k] === 'primary' || roles[k] === 'secondary' ? 'hl' : ''}"><td>${esc(MEASURE_LABELS[k] || k)}${roles[k] === 'primary' ? '<span class="tag">MAIN</span>' : roles[k] === 'secondary' ? '<span class="tag">ALSO</span>' : ''}</td>
       <td>${sku.m[k]}</td>${opts.map((o) => `<td>${o.m[k] ?? '–'}</td>`).join('')}</tr>`).join('')}
   </tbody></table>
-  <div class="small muted" style="margin-top:4px">Every measurement is shown. Highlighted rows are what the fix targets, and the others change too.</div>`;
+`;
 }
 
 /** What to do when nothing in stock fits: the outcomes that make sense, in plain words. The customer has been told. */
 function noMatchHelp(r, s) {
   const alteration = s?.kind === 'alteration_or_crossstore';
   return `<div class="card stack" style="margin-top:8px">
-    <strong>What next?</strong>
-    <div class="small">${alteration
-      ? 'Offer an alteration (hemming), or a cross-store order.'
-      : 'Offer a cross-store order, or to save it for later. The customer may also decide to keep what they have.'}
-      If they want none of that, close it as Left. The customer's screen already says there is no match in the store right now.</div>
+    <div class="small">${alteration ? 'Offer a hem or a cross-store order.' : 'Offer a cross-store order or save it for later.'}</div>
   </div>`;
 }
 
@@ -528,7 +534,7 @@ function suggestionBlock(r, sku, role, compact = false) {
   const opts = ids.map((id) => getSku(id)).filter(Boolean);
   const hasItem = opts.length > 0 && r.suggestionState !== 'no_match'; // once nothing fits, the items are no longer on offer
   const isOpenReq = r.status === 'accepted' || r.status === 'on_the_way';
-  const canAct = r.suggestionState === 'shown' && hasItem && !r.itemDeclined;
+  const canAct = r.status === 'accepted' && r.suggestionState === 'shown' && hasItem && !r.itemDeclined;
   const sel = hasItem ? selection(r) : new Set();
   let body = '';
 
@@ -537,36 +543,31 @@ function suggestionBlock(r, sku, role, compact = false) {
     for (const n of (s.perBaseline || []).filter((x) => (s.baselines || []).length > 1 && !['alternative', 'alternative_size', 'alternative_style', 'stock_check'].includes(x.kind))) {
       body += `<div class="banner info"><strong>${esc(itemName(n.forId))}:</strong> ${esc(n.reason)}</div>`; // a picked item with nothing in stock
     }
-    body += `<div class="trip-head">${opts.length > 1 ? `Bring these ${opts.length} in one trip` : 'Bring'}</div>`;
     body += opts.map((o) => {
       const why = choiceSummary(optionFor(s, o.id));
       return `<div class="optrow ${canAct && !sel.has(o.id) ? 'off' : ''}">
         ${canAct ? `<input type="checkbox" class="optbox" aria-label="Bring ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-toggle" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${sel.has(o.id) ? 'checked' : ''}>` : ''}
         <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong></span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
-          <div class="small muted">${esc(skuLabel(o))}${reported(o.id) ? ` · ${onRecord(o.id)} on record, ${reported(o.id)} reported missing` : ''}</div>
+          ${reported(o.id) ? `<div class="small muted">${reported(o.id)} reported missing</div>` : ''}
           ${why && opts.length > 1 ? `<div class="small">${esc(cap1(why))}</div>` : ''}</div>
         ${isOpenReq && !r.itemDeclined && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}
       </div>`;
     }).join('');
     if (opts.length > 1 && s.kind === 'alternative_style') {
-      body += '<div class="small muted">Each is a different design in your size. See the notes above for what differs.</div>';
+      body += '<div class="small muted">Each is a different design.</div>';
     }
-    body += comparisons(r, s, opts, sku);
-    if (s.reason && opts.length === 1) body += `<p>${esc(s.reason)}</p>`;
+    body += `<details class="sec" data-sec="cmp:${esc(r.id)}" ${openAttr(`cmp:${r.id}`, false)}><summary>Measurements</summary>${comparisons(r, s, opts, sku)}</details>`;
   } else {
     body += r.suggestionState === 'no_match'
-      ? `<div class="banner alert"><strong>You marked that nothing in stock fits this customer.</strong></div>`
-      : `<div class="banner ${s.kind === 'alteration_or_crossstore' ? 'info' : 'alert'}"><strong>${esc(s.reason)}</strong></div>`;
+      ? `<div class="banner alert">Nothing in stock fits.</div>`
+      : `<div class="banner ${s.kind === 'alteration_or_crossstore' ? 'info' : 'alert'}">${esc(s.reason)}</div>`;
     if (r.noMatch) body += noMatchHelp(r, s);
-    if (s.drivers?.length && r.suggestionState !== 'no_match') {
-      body += `<div class="small muted">Checked: ${s.drivers.map((d) => `${esc(MEASURE_LABELS[d.measure] || d.measure)} ${d.original} cm`).join(', ')} — no in-stock item improves it.</div>`;
-    }
   }
 
   // Items already ruled out for this request, struck through, so a rushed associate sees what changed.
   const struck = [
-    ...r.discrepancies.map((d) => `<span class="chip struck">❌ <s>${esc(itemName(d.skuId))}</s> <span>(Rack ${esc(d.rack)} — marked empty)</span></span>`),
-    ...r.declinedIds.map((id) => `<span class="chip struck">❌ <s>${esc(itemName(id))}</s> <span>(declined by the customer)</span></span>`),
+    ...r.discrepancies.map((d) => `<span class="chip struck">❌ <s>${esc(itemName(d.skuId))}</s> <span>(not on rack)</span></span>`),
+    ...r.declinedIds.map((id) => `<span class="chip struck">❌ <s>${esc(itemName(id))}</s> <span>(declined)</span></span>`),
   ];
   // "Fallback #n": how many items were reported missing on the rack or declined before this suggestion (not what was merely tried).
   const fallbackN = new Set([...r.discrepancies.map((d) => d.skuId), ...r.declinedIds]).size + 1;
@@ -575,99 +576,72 @@ function suggestionBlock(r, sku, role, compact = false) {
     ? `<div class="fallback-head">Fallback #${fallbackN}: ${hasItem ? `<strong>${esc(opts.map((o) => optionName(baseFor(r, o, s) || sku, o)).join(' · '))}</strong> ${rackPill(opts[0].rack, `${stockNow(opts[0].id)} left`)}` : 'no in-stock alternative'}</div>` : '';
   const struckHtml = struck.length ? `<div class="chips-struck">${struck.join('')}</div>` : '';
 
-  const tripItems = r.onTheWay?.items?.map((i) => i.itemId) || [];
-  const pulls = r.floorTaskIds.map((id) => S.derived.byId[id]).filter(Boolean);
-  // Offered once the items are confirmed (before that, "Confirm & ask floor to pull" does both in one tap), and
-  // only while no pull is live or done; cancelling a pull offers it again.
-  const showPull = role === 'runner' && isOpenReq && tripItems.length && r.deliveredTs == null && !pulls.some((t) => ['requested', 'accepted', 'done'].includes(t.status));
-  const pullBtn = showPull ? `<button class="btn block" style="margin-top:10px" data-action="a-pull" data-v="${esc(r.id)}">Request floor stock pull${tripItems.length > 1 ? ` for all ${tripItems.length}` : ''}</button>` : '';
+  const { pulls } = pullState(r, role);
   const tasks = pulls
-    .map((t) => `<div class="row small" style="margin-top:8px"><span>Floor pull: ${(t.items || []).map((i) => rackPill(i.rack)).join(' ')}</span><span>${statusPill(t)}${['requested', 'accepted'].includes(t.status) && role === 'runner' ? ` <button class="link-btn" data-action="a-pull-cancel" data-v="${esc(t.id)}">Cancel pull</button>` : ''}</span></div>`).join('');
+    .map((t) => `<div class="row small" style="margin-top:8px"><span>Floor pull ${(t.items || []).map((i) => rackPill(i.rack)).join(' ')}</span><span>${statusPill(t)}${['requested', 'accepted'].includes(t.status) && role === 'runner' ? ` <button class="link-btn" data-action="a-pull-cancel" data-v="${esc(t.id)}">Cancel</button>` : ''}</span></div>`).join('');
 
   // Step 2: the trip is on its way. One summary; the table stays one tap away.
   if (compact) {
     const trip = (r.onTheWay?.items || []).map((i) => getSku(i.itemId)).filter(Boolean);
     const key = `sugg:${r.id}`;
-    return `<h2>On the way</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
+    return `<h2>${r.deliveredTs != null ? 'Brought' : 'On the way'}</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}
-      <div class="trip-head">Bringing ${trip.length > 1 ? `${trip.length} items` : 'this item'} to Room ${esc(r.room)}</div>
       ${trip.map((o) => `<div class="optrow"><div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong></span>${rackPill(o.rack)}</div>
-        <div class="small muted">${esc(skuLabel(o))}</div></div>
+</div>
         <button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button></div>`).join('')}
       ${struckHtml}
-      <details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}><summary>All measurements</summary>${trip.length ? comparisons(r, s, trip, sku) : ''}</details>
-      ${pullBtn}${tasks}
+      <details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}><summary>Measurements</summary>${trip.length ? comparisons(r, s, trip, sku) : ''}</details>
+      ${tasks}
     </div>`;
   }
 
-  // Step 1 (and the cases where nothing can be brought): the suggestion with its actions.
-  let actions = '';
-  if (r.itemDeclined) {
-    actions = `<button class="btn primary block" style="margin-top:12px" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="customer_declined">Customer declined — show next best</button>`;
-  } else if (canAct) {
-    actions = `<div class="stack" style="margin-top:12px">
-      <button class="btn primary block" data-action="a-confirm" data-v="${esc(r.id)}" ${sel.size ? '' : 'disabled'}>Confirm &amp; bring ${sel.size === opts.length && opts.length > 1 ? 'all ' : ''}${sel.size}</button>
-      ${role === 'runner' ? `<button class="btn block" data-action="a-confirm" data-pull="1" data-v="${esc(r.id)}" ${sel.size ? '' : 'disabled'}>Confirm &amp; ask floor to pull</button>` : ''}
-      <button class="btn block" data-action="a-more" data-v="${esc(r.id)}">None of these — show other options</button>
-      <button class="btn danger block" data-action="a-nomatch" data-v="${esc(r.id)}">Nothing in stock fits</button></div>`;
-  } else if (r.suggestionState === 'rejected') {
-    actions = '<div class="banner alert" style="margin-top:10px">Suggestion rejected (recorded)</div>';
-  }
-  return `<h2>Suggestion</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
-      <p class="label-note"><strong>Suggestion — associate confirms fit with customer</strong></p>
-      ${fallbackHead}${struckHtml}${body}${actions}
-      ${pullBtn}${tasks}
+  return `<h2>${hasItem ? 'Bring' : 'Result'}</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
+      ${fallbackHead}${struckHtml}${body}
+      ${tasks}
     </div>`;
 }
 
 /**
- * Once the items are confirmed: hand them over (that stops the delivery timer and starts the customer's try-on), and
- * only then the outcome. The customer's own word on the fit is shown, but the staff still close the request.
+ * After the hand-over: the customer's own word on the fit (the staff still close the request), and the door form.
+ * The hand-over and the outcome themselves are in the bar.
  */
 function tripEnd(r) {
-  if (r.deliveredTs == null) {
-    const livePull = r.floorTaskIds.map((id) => S.derived.byId[id]).some((t) => t && ['requested', 'accepted'].includes(t.status));
-    return `<button class="btn primary block xl" style="margin-top:12px" data-action="a-deliver" data-v="${esc(r.id)}">Handed to customer</button>
-      <div class="small muted" style="margin-top:6px">Stops the delivery timer. The customer tries it on and tells us how it fits.${livePull ? ' A floor pull is in progress: whoever hands the items over first completes it for both of you.' : ''}</div>
-      <div style="text-align:right"><button class="back" data-action="a-left-early" data-v="${esc(r.id)}">Customer left early</button></div>`;
-  }
-  const by = r.deliveredBy ? `<div class="small muted" style="margin-top:8px">Handed to the customer by the ${esc(roleLabel(r.deliveredBy).toLowerCase())}.</div>` : '';
-  const say = !r.tryOn ? `${by}<div class="small muted">Customer is trying it on…</div>`
-    : r.tryOn.result === 'no_more' ? `${by}<div class="banner info"><strong>Customer says they are all set 👋</strong> No more sizes needed. Close it with the outcome.</div>`
-    : r.tryOn.result === 'fits' ? `${by}<div class="banner good"><strong>Customer says it fits 👍</strong> Close it when they decide.</div>`
-      : `${by}<div class="banner info"><strong>Customer says it is still not right 🔄</strong> A follow-up request will come from the room.</div>`;
-  return `${say}${doorBlock(r)}${closeBlock(r)}`;
+  if (r.deliveredTs == null) return '';
+  const by = r.deliveredBy ? `<div class="small muted">Handed over by the ${esc(roleLabel(r.deliveredBy).toLowerCase())}</div>` : '';
+  const say = !r.tryOn ? `${by}<div class="small muted">Trying it on…</div>`
+    : r.tryOn.result === 'no_more' ? `${by}<div class="banner info">Customer: all set 👋</div>`
+    : r.tryOn.result === 'fits' ? `${by}<div class="banner good">Customer: it fits 👍</div>`
+      : `${by}<div class="banner info">Customer: still not right 🔄 A follow-up is coming.</div>`;
+  return `${say}${doorBlock(r)}`;
 }
 
 /** "Customer asked for another size": which item came closest and what was off, entered by the runner at the door. */
 function doorBlock(r) {
   const d = doorOf(r.id);
   const items = (r.onTheWay?.items || []).map((i) => i.itemId).filter((id) => getSku(id));
-  if (!items.length) return '';
-  if (!d.open) return `<button class="btn block" style="margin-top:10px" data-action="a-door-open" data-v="${esc(r.id)}">🔄 Customer asked for another size</button>`;
+  if (!items.length || !d.open) return '';
   const name = (id) => { const b = getSku(r.baseOf?.[id]) || getSku(r.skuId); return b ? tripItemName(b, getSku(id)) : itemName(id); };
   const kind = styleKind(getSku(d.item || items[0]).category);
   const optBtn = (action, v, label, on) => `<button type="button" class="opt ${on ? 'on' : ''}" data-action="${action}" data-id="${esc(r.id)}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
-  const chips = FIT_ISSUES.some((k) => d.issues.includes(k)) ? `<div class="small muted" style="margin-top:8px">Where? (optional)</div><div class="opts">${CHIPS_BY_KIND[kind === 'trousers' ? 'trousers' : 'top'].map((c) => optBtn('a-door-chip', c, c.charAt(0).toUpperCase() + c.slice(1), d.chips.has(c))).join('')}</div>` : '';
+  const chips = FIT_ISSUES.some((k) => d.issues.includes(k)) ? `<div class="small muted" style="margin-top:8px">Where?</div><div class="opts">${CHIPS_BY_KIND[kind === 'trousers' ? 'trousers' : 'top'].map((c) => optBtn('a-door-chip', c, c.charAt(0).toUpperCase() + c.slice(1), d.chips.has(c))).join('')}</div>` : '';
   return `<div class="card stack" style="margin-top:10px">
-    <strong>Which item came closest?</strong>
+    <strong>Closest item</strong>
     <div class="opts">${items.map((id) => optBtn('a-door-item', id, name(id), d.item === id)).join('')}</div>
-    ${d.item ? `<strong>What was still off?</strong><div class="opts">${Object.entries(ISSUES).map(([k, v]) => optBtn('a-door-issue', k, v, d.issues.includes(k))).join('')}</div>${chips}` : ''}
-    <button class="btn primary block" data-action="a-door-send" data-v="${esc(r.id)}" ${d.item && d.issues.length ? '' : 'disabled'}>Open the next attempt</button>
+    ${d.item ? `<strong>Still off</strong><div class="opts">${Object.entries(ISSUES).map(([k, v]) => optBtn('a-door-issue', k, v, d.issues.includes(k))).join('')}</div>${chips}` : ''}
+    <button class="btn primary block" data-action="a-door-send" data-v="${esc(r.id)}" ${d.item && d.issues.length ? '' : 'disabled'}>Next attempt</button>
     <button class="link-btn" data-action="a-door-open" data-v="${esc(r.id)}">Cancel</button>
   </div>`;
 }
 
-function closeBlock(r) {
-  // When more than one item could be the one kept (everything brought and not reported, from any attempt), "bought alternative"
-  // names it: one tap each. That is also what lets the next request from the same room use what this customer's fit turned out to be.
+/** The outcome buttons, shown in the bar. When several items could be the one kept, "bought alternative" names it. */
+function outcomeButtons(r) {
   const kept = r.keepable.filter((id) => getSku(id));
   const label = (id) => { const b = getSku(r.baseOf?.[id]) || getSku(r.skuId); return b ? tripItemName(b, getSku(id)) : itemName(id); };
   const buttons = Object.entries(OUTCOMES).flatMap(([k, v]) => (k === 'bought_alternative' && !kept.length ? [] // nothing was brought
     : k === 'bought_alternative' && kept.length > 1
       ? kept.map((id) => `<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}" data-item="${esc(id)}">Bought ${esc(label(id))}</button>`)
       : [`<button class="btn" data-action="a-close" data-v="${esc(r.id)}" data-outcome="${k}">${esc(v)}</button>`]));
-  return `<h2>Outcome</h2><div class="btn-grid">${buttons.join('')}</div>`;
+  return `<div class="btn-grid">${buttons.join('')}</div>`;
 }
 
 /** What an earlier purchase in the same room visit suggests for this request (a hint, never a decision). */
@@ -679,7 +653,7 @@ function reasonBlock(r) {
   const last = r.reasons[r.reasons.length - 1];
   const aiMode = S.parser?.mode === 'ai';
   const rkey = `reason:${r.id}`;
-  return `<details class="sec" data-sec="${esc(rkey)}" ${openAttr(rkey, true)}><summary>Why didn't it convert? (optional)</summary><div class="card stack">
+  return `<details class="sec" data-sec="${esc(rkey)}" ${openAttr(rkey, true)}><summary>Why no sale?</summary><div class="card stack">
     ${(!last && r.status === 'closed' && ['left', 'saved_for_later'].includes(r.outcome) && r.hadNoMatch) ? `<div class="banner info">
       Nothing in stock fitted this customer.
       <button class="btn block" style="margin-top:8px" data-action="a-reason-nomatch" data-v="${esc(r.id)}">Record reason: no suitable item in stock</button></div>` : ''}

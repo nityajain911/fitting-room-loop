@@ -56,6 +56,8 @@ The AI can only fill the structured fields (area, issue, summary, evidence type,
 - Floor associate: `/#associate/floor`
 - Manager: `/#manager`
 
+**Lock a device to one role.** Add `mode=` to a link once and the device remembers it: `/#customer?room=3&mode=customer` (a room tablet: no tabs, no Admin link, screen kept awake), `/#associate?mode=staff` (a runner or floor phone: only the queue, beeps and buzzes for new work and escalations, 🔔 turns the sound off), `/#manager?mode=manager`. `/#customer?mode=demo` unlocks it again. The Admin page lists every link.
+
 If the phones can't reach the laptop, the Wi-Fi probably isolates devices (common on guest and office networks). Turn on your phone's hotspot and connect the laptop and the other phones to it, or use the public deploy below.
 
 **Public deploy (recommended as the backup plan):** the repo includes a `render.yaml` for Render's free tier.

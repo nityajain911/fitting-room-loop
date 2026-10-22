@@ -25,6 +25,12 @@ const infoBtn = (k) => `<button class="info-btn" data-action="m-info" data-k="${
 const title = (k, text, definition) => `<div class="kpi-title"><strong>${text}</strong>${infoBtn(k)}</div>
   ${info[k] ? `<div class="info-text">${definition}</div>` : ''}`;
 
+/** What needs the manager right now (for the alert sound): every open escalation. */
+export function attention() {
+  const m = computeMetrics(S.events, undefined, S.config || undefined);
+  return new Map(m.openEscalations.map((id) => [id, true]));
+}
+
 export function render() {
   const m = computeMetrics(S.events, undefined, S.config || undefined);
   const cfg = S.config || DEFAULTS;
@@ -34,7 +40,7 @@ export function render() {
     <div class="banner demo">Demo data — prototype only, not store results</div>
     <h1>Manager dashboard</h1>
 
-    ${attention(m)}
+    ${escalationCards(m)}
 
     <div class="north">
       <div class="tile">${title('save', 'Issue save rate', 'Fitting-room proxy, not store conversion: (bought original + bought alternative + cross-store order) ÷ closed requests. Saved for later and cancelled requests are not counted as saves.')}
@@ -74,7 +80,7 @@ function bullet(label, ms, cfg, waiting = 'no data yet') {
 }
 
 /** Open escalations only. Nothing is shown when there are none. */
-function attention(m) {
+function escalationCards(m) {
   const items = m.openEscalations.map((id) => S.derived.byId[id]).filter(Boolean);
   if (!items.length) return '';
   return `<h2 style="color:var(--danger)">Needs attention — ${plural(items.length, 'escalation')} open</h2>

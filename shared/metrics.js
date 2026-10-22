@@ -253,6 +253,12 @@ function laterAttempts(allRounds) {
   };
 }
 
+/** The typical time to be accepted (first attempt), once there are enough requests to say so; otherwise null. */
+export function typicalAcceptMs(requests, minSamples = 3) {
+  const waits = requests.filter((r) => r.acceptedTs != null).map((r) => r.acceptedTs - r.createdTs);
+  return waits.length >= minSamples ? median(waits) : null;
+}
+
 export const HEATMAP_AREAS = ['waist', 'chest', 'shoulders', 'sleeves', 'length', 'hips'];
 export const HEATMAP_COLUMNS = [...HEATMAP_AREAS, 'general']; // "general": the customer named the issue but no body area
 

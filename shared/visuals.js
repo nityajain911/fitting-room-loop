@@ -3,6 +3,13 @@
 
 const r1 = (n) => Math.round(n * 10) / 10;
 
+/** A wait in a few words for a customer: "under a minute", "about 2 min". */
+export function waitPhrase(ms) {
+  if (ms == null) return null;
+  if (ms < 45_000) return 'under a minute';
+  return `about ${Math.max(1, Math.round(ms / 60_000))} min`;
+}
+
 /** Ring fill (0..1 of the escalation threshold) and tone for a card's SLA timer. */
 export function slaRing(elapsedMs, cfg, done = false) {
   if (done) return { fraction: 1, tone: 'done' };
