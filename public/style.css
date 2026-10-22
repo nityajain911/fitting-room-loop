@@ -316,7 +316,7 @@ a.card.compact { display: block; text-decoration: none; color: inherit; }
 .actionbar { position: sticky; bottom: 0; z-index: 20; margin: 16px calc(-1 * var(--gutter)) 0; padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -6px 16px rgba(0,0,0,.08); max-height: 70vh; overflow: auto; }
 body[data-mode="demo"] .actionbar { bottom: 52px; }
 .bar-row { display: flex; gap: 8px; }
-.bar-row .btn.primary { flex: 1; }
+.bar-row .btn.xl { flex: 1; }
 .bar-dots { min-width: 56px; min-height: 58px; font-size: 22px; }
 .bar-more { display: grid; gap: 8px; margin-bottom: 8px; }
 .bar-out { margin-bottom: 4px; }
