@@ -5,7 +5,7 @@
 //   tracker  (#customer/<id>) — one active order card. The form is not rendered, so nothing can be edited by accident.
 import { S, hooks, handlers, api, act, esc, toast, issuesText, itemName, STAGE_TEXT } from './core.js';
 import { toggleIssue } from '/shared/events.js';
-import { CATALOGUE, garments, getSku, stylesFor, priceLabel } from '/shared/catalogue.js';
+import { CATALOGUE, garments, getSku, stylesFor, priceLabel, COLOUR_HEX } from '/shared/catalogue.js';
 import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, styleKind } from '/shared/events.js';
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
@@ -41,8 +41,11 @@ const formKind = () => {
 const chipsForForm = () => CHIPS_BY_KIND[formKind() === 'trousers' ? 'trousers' : 'top'];
 const styleAxesForForm = () => STYLE_AXES[formKind()];
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
-const opt = (action, v, label, on, cls = '') =>
-  `<button type="button" class="opt ${cls} ${on ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
+// Three kinds of control, so the eye can tell them apart: pills (a choice among many), a segmented bar (one of two or three),
+// and square buttons for sizes. A colour pill carries a swatch dot; the name stays beside it.
+const opt = (action, v, label, on, cls = '', swatch = null) =>
+  `<button type="button" class="opt ${cls} ${on ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${on}">${swatch ? `<i class="swatch" style="background:${esc(swatch)}"></i>` : ''}${esc(label)}</button>`;
+const segmented = (action, items, current) => `<div class="seg" role="group">${items.map((v) => `<button type="button" class="${current === v ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${current === v}">${esc(v)}</button>`).join('')}</div>`;
 
 handlers['c-dept'] = (el) => {
   if (form.dept === el.dataset.v) return;
@@ -232,7 +235,7 @@ function whereView(chips = chipsForForm(), garmentChosen = !!form.name) {
 /** What is the issue (and, for "another style", which details), shared by the normal form and the follow-up. */
 function issueSection(axes) {
   return `<h2>What's the issue? ${form.issues.some((k) => FIT_ISSUES.includes(k)) ? '<span class="muted" style="text-transform:none;letter-spacing:0">(pick more than one if both apply)</span>' : ''}</h2>
-    <div class="issue-grid">${Object.entries(ISSUES).map(([k, v]) => opt('c-issue', k, v, form.issues.includes(k), k === 'check_stock' ? 'wide' : '')).join('')}</div>
+    <div class="issue-grid">${Object.entries(ISSUES).map(([k, v]) => opt('c-issue', k, v, form.issues.includes(k))).join('')}</div>
     ${form.issues.includes('another_style') ? `<h2>What would you like different? <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
     <div class="opts">${axes.map((a) => opt('c-style-axis', a, STYLE_AXIS_LABELS[a], form.styleAxes.has(a))).join('')}</div>` : ''}`;
 }
@@ -284,9 +287,9 @@ function formView() {
     <h2>Garment</h2>
     <div class="opts">${garments(CATALOGUE, form.dept).map((g) => opt('c-garment', g, g, form.name === g)).join('')}</div>
     ${styles.length > 1 ? `<h2>Style</h2><div class="opts">${styles.map((st) => opt('c-style', st, st, form.styleName === st)).join('')}</div>` : ''}
-    ${form.name && form.styleName && coloursFor(form.name, form.styleName).length > 1 ? `<h2>Colour</h2><div class="opts">${coloursFor(form.name, form.styleName).map((c) => opt('c-colour', c, c, form.colour === c)).join('')}</div>` : ''}
-    ${form.colour ? `<h2>Size</h2><div class="opts">${sizes.map((s) => opt('c-size', s, s, form.size === s)).join('')}</div>` : ''}
-    ${form.size ? `<h2>Cut</h2><div class="opts">${cuts.map((c) => opt('c-cut', c, c, form.cut === c)).join('')}</div>` : ''}
+    ${form.name && form.styleName && coloursFor(form.name, form.styleName).length > 1 ? `<h2>Colour</h2><div class="opts">${coloursFor(form.name, form.styleName).map((c) => opt('c-colour', c, c, form.colour === c, '', COLOUR_HEX[c])).join('')}</div>` : ''}
+    ${form.colour ? `<h2>Size</h2><div class="opts sizes">${sizes.map((s) => opt('c-size', s, s, form.size === s, 'size')).join('')}</div>` : ''}
+    ${form.size ? `<h2>Cut</h2>${segmented('c-cut', cuts, form.cut)}` : ''}
 
     ${issueSection(styleAxesForForm())}
     ${whereView()}
@@ -308,7 +311,7 @@ const SHORT_STEPS = { requested: 'Requested', accepted: 'Accepted', on_the_way: 
 function stepper(r, steps, cancelled) {
   let current = 0;
   steps.forEach((s, i) => { if (s.reached) current = i; });
-  return `<ol class="hstep">${steps.map((s, i) => `<li class="${s.reached ? 'reached' : ''} ${i === current && !cancelled ? 'current' : ''}">
+  return `<ol class="hstep">${steps.map((s, i) => `<li class="${s.reached ? 'reached' : ''} ${i === current && !cancelled ? 'current' : ''} ${i === current && !cancelled && r.status !== 'closed' ? 'pulse' : ''}">
     <span class="dot">${s.reached ? '✓' : ''}</span><span class="lbl">${esc(s.key === 'on_the_way' && r.deliveredTs != null ? 'Delivered' : SHORT_STEPS[s.key])}</span></li>`).join('')}</ol>`;
 }
 

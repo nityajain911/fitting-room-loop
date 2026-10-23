@@ -49,7 +49,7 @@ The AI can only fill the structured fields (area, issue, summary, evidence type,
 
 ## Open it on phones
 
-**Same Wi-Fi:** run `npm start` on your laptop and open the `on your Wi-Fi: http://192.168.x.x:3000` address on each phone. Tabs on the bottom switch screens; direct links:
+**Same Wi-Fi:** run `npm start` on your laptop and open the `on your Wi-Fi: http://192.168.x.x:3000` address on each phone. The floating dock at the bottom switches screens (a dot shows where something is waiting); direct links:
 
 - Customer: `/#customer` (or `/#customer?room=3` to pre-set the room, as a per-door QR code would)
 - Runner: `/#associate/runner`

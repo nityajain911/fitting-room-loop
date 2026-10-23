@@ -230,3 +230,11 @@ test('a price reads as rupees with Indian digit grouping, and nothing when there
 test('the sample label says the prices are illustrative too', () => {
   assert.match(LABEL, /sample data and prices/i);
 });
+
+// ---------- colour swatches ----------
+import { COLOUR_HEX } from '../shared/catalogue.js';
+
+test('every colour in the catalogue has a swatch colour', () => {
+  const colours = new Set(CAT.map((s) => s.colour));
+  for (const c of colours) assert.match(COLOUR_HEX[c] ?? '', /^#[0-9a-f]{6}$/i, `swatch for ${c}`);
+});

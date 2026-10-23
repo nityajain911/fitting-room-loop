@@ -6,6 +6,7 @@ import * as associate from './associate.js';
 import * as manager from './manager.js';
 import * as admin from './admin.js';
 import * as alerts from './alerts.js';
+import { isOpen } from '/shared/derive.js';
 import { MODE_PARAM, isMode, allowedView, homeOf, showAdminLink } from '/shared/modes.js';
 
 const views = { customer, associate, manager, admin };
@@ -55,6 +56,16 @@ const syncBell = (view) => {
 };
 bell.addEventListener('click', () => { alerts.toggleSound(); syncBell(parseRoute().view); });
 
+/** A dot on a tab of the demo dock when that screen has something waiting for someone. */
+function updateDots() {
+  const open = [...S.derived.requests, ...S.derived.tasks].filter(isOpen);
+  const show = { associate: open.some((x) => x.status === 'requested' || x.escalated), manager: open.some((x) => x.escalated) };
+  for (const [tab, on] of Object.entries(show)) {
+    const dot = document.querySelector(`[data-tab="${tab}"] .nd`);
+    if (dot) dot.hidden = !on;
+  }
+}
+
 function render() {
   const { view, args, query, moved } = parseRoute();
   if (moved) history.replaceState(null, '', `#${view}`);
@@ -66,6 +77,7 @@ function render() {
   renderInto(root, views[view].render({ args, query }));
   tickTimers();
   updateDemoPill();
+  updateDots();
   alerts.update(attention(view));
 }
 hooks.render = render;

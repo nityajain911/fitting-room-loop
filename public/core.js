@@ -138,6 +138,8 @@ export function tickTimers() {
     let { fraction, tone } = slaRing(ms, marks(el), end != null);
     if (end == null && el.dataset.esc === '1') { fraction = 1; tone = 'esc'; }
     el.className = `ring ${tone}`;
+    const card = el.closest('.card');
+    if (card) { card.classList.remove('sla-ok', 'sla-warn', 'sla-esc'); if (tone !== 'done') card.classList.add(`sla-${tone}`); } // the card's left stripe follows the same clock
     el.querySelector('.rp')?.setAttribute('stroke-dashoffset', String(RING_C * (1 - fraction)));
   });
   document.querySelectorAll('[data-timer]').forEach((el) => {

@@ -449,9 +449,9 @@ function issueSection(r, info) {
 
 // Compact provenance badges; the legend at the foot of the panel gives the full wording.
 const BADGES = {
-  customer_tapped: '<span class="badge" title="Customer tapped">👤 Tap</span>',
-  ai_parsed: '<span class="badge ai" title="Parsed by AI from the customer\'s text">✨ AI</span>',
-  rule_fallback: '<span class="badge rule" title="Rule-based fallback — not AI">⚙ Rule</span>',
+  customer_tapped: '<span class="badge" title="Customer tapped">👤 Tapped</span>',
+  ai_parsed: '<span class="badge ai" title="Parsed by AI from the customer\'s text">✨ AI Parsed</span>',
+  rule_fallback: '<span class="badge rule" title="Rule-based fallback — not AI">⚙️ Rule Fallback</span>',
   default: '<span class="badge" title="Assumed default">~ Assumed</span>',
 };
 const badge = (...srcs) => [...new Set(srcs)].map((x) => BADGES[x] || '').join(' ');
@@ -479,7 +479,6 @@ function issuePanel(r, info) {
     ${info.conflicts.map((c) => `<div class="banner alert">Conflict: ${esc(c)}</div>`).join('')}
     ${info.assumptions.map((a) => `<div class="banner info">${esc(a)}</div>`).join('')}
     ${info.notes.map((a) => `<div class="small muted">${esc(a)}</div>`).join('')}
-    <div class="legend-line">👤 customer tapped · ✨ parsed by AI · ⚙ rule-based fallback, not AI · ~ assumed</div>
   </div>`;
 }
 
@@ -603,7 +602,7 @@ function suggestionBlock(r, sku, role, compact = false) {
     const trip = (r.onTheWay?.items || []).map((i) => getSku(i.itemId)).filter(Boolean).sort((a, b) => String(a.rack).localeCompare(String(b.rack)));
     const got = picked[r.id] || new Set();
     const key = `sugg:${r.id}`;
-    return `<h2>${r.deliveredTs != null ? 'Brought' : 'On the way'}</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
+    return `<h2>${r.deliveredTs != null ? 'Brought' : 'On the way'}</h2><div class="card well ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}
       ${trip.map((o) => `<div class="optrow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack)}</div>
 </div>
@@ -614,7 +613,7 @@ function suggestionBlock(r, sku, role, compact = false) {
     </div>`;
   }
 
-  return `<h2>${hasItem ? 'Bring' : 'Result'}</h2><div class="card ${isFallback ? 'fallback-card' : ''}">
+  return `<h2>${hasItem ? 'Bring' : 'Result'}</h2><div class="card well ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}${struckHtml}${body}
       ${tasks}
     </div>`;

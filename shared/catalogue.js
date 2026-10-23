@@ -16,6 +16,12 @@ const PRICES = {
   WX: 4799, WY: 5199, WP: 4299, WS: 4599, WL: 3299, WM: 3499, WN: 3799, WJ: 5799, WC: 4099, WQ: 4399,
 };
 
+// The colour of each swatch dot on the customer's colour pills. The name is always shown beside it.
+export const COLOUR_HEX = {
+  White: '#ffffff', 'Light Blue': '#b8d4ee', Navy: '#1f2f55', 'Sky Blue': '#8ec8f0', Blue: '#3b73c9',
+  Red: '#c43b34', Khaki: '#c2ac82', 'Dark Indigo': '#2c3a68', 'Light Wash': '#a9c0da',
+};
+
 /** "₹4,999" (Indian digit grouping), or nothing when an article has no price. */
 export const priceLabel = (sku) => (Number.isFinite(sku?.price) ? `₹${sku.price.toLocaleString('en-IN')}` : '');
 

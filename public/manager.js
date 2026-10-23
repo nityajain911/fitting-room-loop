@@ -62,7 +62,7 @@ export function render() {
     <div class="north">
       <div class="tile">${title('save', 'Issue save rate', 'Fitting-room proxy, not store conversion: (bought original + bought alternative + cross-store order) ÷ closed requests. Saved for later and cancelled requests are not counted as saves. The rupee figure adds the sample price of what those requests came to (what was bought, or for a cross-store order what the customer wanted).')}
         <div class="num">${pct(m.saveRate)}</div>
-        <div class="cap">${m.saves} of ${m.closed} closed${m.saves ? ` · ${rupees(m.savedValue)} saved` : ''}</div></div>
+        <div class="cap">${m.saves} of ${m.closed} closed</div>${m.saves ? `<span class="pill ok kpi-pill">${rupees(m.savedValue)} saved</span>` : ''}</div>
       <div class="tile">${title('sla', 'SLA health', `Median time to accept a request, and median time from accept to the item being on its way, each against its own warning and escalation marks (accept: ${accept.warnSeconds}s / ${accept.escalateSeconds}s, deliver: ${deliver.warnSeconds}s / ${deliver.escalateSeconds}s). The escalation times are prototype settings, set on the Admin page.`)}
         ${bullet('Accept', m.medianAcceptMs, accept, 'Pending first accept')}${bullet('Deliver', m.medianDeliverMs, deliver, 'Pending first delivery')}</div>
       <div class="tile">${title('rack', 'Not on rack', 'Times an associate found a suggested item missing from its rack, meaning the stock record was wrong.')}
@@ -132,7 +132,8 @@ function bullet(label, ms, cfg, waiting = 'no data yet') {
 }
 
 /** Open escalations only. Nothing is shown when there are none. */
-const FUNNEL_COLOURS = { bought_alternative: 'var(--ok)', bought_original: '#7bcf9b', cross_store_order: 'var(--accent)', saved_for_later: '#a78bfa', left: 'var(--danger)' };
+// Green: bought an alternative. Teal: bought the original. Blue: a cross-store order or saved for later. Grey: left.
+const FUNNEL_COLOURS = { bought_alternative: '#16a34a', bought_original: '#0d9488', cross_store_order: '#3b82f6', saved_for_later: '#93c5fd', left: '#94a3b8' };
 
 /** 100% stacked bar of closed outcomes. */
 function funnel(m) {
@@ -162,7 +163,7 @@ function heatmap(m, cfg) {
     const bg = c.more && c.less
       ? `linear-gradient(to bottom, rgba(${CORAL}, ${alpha(c.more)}) 50%, rgba(${TEAL}, ${alpha(c.less)}) 50%)`
       : `rgba(${c.more ? CORAL : TEAL}, ${alpha(n)})`;
-    return `<div class="hcell" style="background:${bg}" title="Needed more: ${c.more} · needed less: ${c.less}"><b>${t.main}</b><small>${esc(t.sub)}</small></div>`;
+    return `<div class="hcell ${n >= 3 ? 'hot' : ''}" style="background:${bg}" title="Needed more: ${c.more} · needed less: ${c.less}"><b>${t.main}</b><small>${esc(t.sub)}</small></div>`;
   };
   const minN = cfg.smallSampleN ?? 5;
   return `<div class="card"><div class="heat" style="grid-template-columns: minmax(104px, 1fr) repeat(${cols.length}, minmax(48px, 64px))">

@@ -16,10 +16,11 @@
   </header>
   <div id="demo-pill" class="demo-pill" hidden></div>
   <main id="view" class="view" aria-live="polite"></main>
-  <nav class="tabs" aria-label="Screens">
+  <!-- The demo's device switcher: a floating dock, apart from the screen above it (hidden on a locked device). -->
+  <nav class="tabs" aria-label="Switch screen (demo)">
     <a href="#customer" data-tab="customer">Customer</a>
-    <a href="#associate" data-tab="associate">Associate</a>
-    <a href="#manager" data-tab="manager">Manager</a>
+    <a href="#associate" data-tab="associate">Associate<i class="nd" hidden></i></a>
+    <a href="#manager" data-tab="manager">Manager<i class="nd" hidden></i></a>
   </nav>
   <p class="sample-note">Illustrative sample data and prices — not Tommy Hilfiger specifications</p>
   <div id="toast" class="toast" role="status"></div>

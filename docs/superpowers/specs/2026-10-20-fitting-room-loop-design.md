@@ -425,3 +425,13 @@ A full read of the code (server, shared, browser) plus a static check (undefined
 - **Runner.** The bar's menu and outcome panel belong to one step of one attempt and close themselves when the request moves on (the outcome panel used to stay open into the next attempt).
 - **Cleanup.** Removed dead code and unused imports.
 
+## 43. Addendum (2026-10-23): visual pass
+Styling and markup only: no change to the engine, data or events, and no new words on any screen. Every colour is a variable with a dark value.
+- **Numbers.** `font-variant-numeric: tabular-nums` on the whole page, so timers, prices and tile figures do not shift as they update every 1.5 seconds.
+- **A tint per role.** Customer: warm off-white with stone borders. Associate: operational slate with white cards. Manager and Admin: cool grey. Set on the body from the current view.
+- **The demo dock.** The Customer / Associate / Manager switcher is a dark floating pill, apart from the screen it switches (hidden on a locked device). A dot on Associate shows a request waiting or escalated; a dot on Manager shows an open escalation. Screens with a bar at the bottom (the runner's action bar, the customer's send button) reach the screen edge and the dock floats over their lower part.
+- **Customer.** Colour pills carry a swatch dot (`COLOUR_HEX`, tested to cover every catalogue colour) with the name beside it. Control types differ: segmented bars (Men's/Women's, Slim/Regular), a strip of 48 px square size buttons, wrapping pills for garment, style, issue and body area. The tracker's current step pulses. Each article being brought is a small card with the price on the right. The send button's summary sits on a solid band.
+- **Runner.** Queue cards get a left stripe by SLA state (green, amber, red), taken from the same clock as the ring and so from the configured times, not fixed seconds. Racks are monospace, with the aisle colour kept. Suggestions sit in a tinted "well". Only the main button is filled; the others are outlines. Provenance badges read "👤 Tapped", "✨ AI Parsed", "⚙️ Rule Fallback" with tints; the legend line under them is gone.
+- **Manager.** The save-rate card shows "₹ saved" as a green pill under the figure. "Where requests ended" is one stacked bar (green: bought alternative, teal: bought original, blue: cross-store or saved for later, grey: left) with a two-column legend. Heatmap cells with three or more reports are bolder; empty cells are a muted dash. The heatmap still shades by direction (needed more or less), not only by count.
+- **Not done, on purpose.** A "+4 cm Waist" pill for the customer (garment measures are not how it feels; the runner has them in the Measurements table), and a square dark room badge in place of the SLA ring.
+
