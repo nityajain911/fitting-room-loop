@@ -140,7 +140,7 @@ function funnel(m) {
   if (!f.total) return `<div class="card muted">No closed requests yet.${f.cancelled ? ` ${f.cancelled} cancelled.` : ''}</div>`;
   return `<div class="card">
     <div class="funnel" role="img" aria-label="Outcomes of ${f.total} closed requests">${f.segments.map((s) => `<i style="width:${s.pct}%;background:${FUNNEL_COLOURS[s.key]}" title="${esc(outcomeLabel(s.key))}: ${s.count}"></i>`).join('')}</div>
-    <div class="flegend">${FUNNEL_ORDER.map((k) => { const n = m.outcomeMix[k] || 0; return `<span class="${n ? '' : 'zero'}"><i style="background:${FUNNEL_COLOURS[k]}"></i>${esc(outcomeLabel(k))} <strong>${n}</strong> · ${rupees(m.outcomeValue[k] || 0)}${n ? ` (${Math.round((n / f.total) * 100)}%)` : ''}</span>`; }).join('')}</div>
+    <div class="flegend">${FUNNEL_ORDER.map((k) => { const n = m.outcomeMix[k] || 0; return `<span class="${n ? '' : 'zero'}"><i style="background:${FUNNEL_COLOURS[k]}"></i>${esc(outcomeLabel(k))} <strong>${n}</strong>${n ? ` (${Math.round((n / f.total) * 100)}%)` : ''}</span>`; }).join('')}</div>
     ${f.cancelled ? `<div class="small muted" style="margin-top:6px">+ ${f.cancelled} cancelled by the customer (not part of the bar)</div>` : ''}
   </div>`;
 }
