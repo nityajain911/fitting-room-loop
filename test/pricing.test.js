@@ -121,3 +121,14 @@ test('rupees saved: what converted requests came to, and the value in every outc
   assert.deepEqual(m.outcomeValue, { bought_original: 4999, bought_alternative: 5499, cross_store_order: 4499, saved_for_later: 0, left: 3499 });
   assert.equal(computeMetrics([]).savedValue, 0);
 });
+
+// ---------- a price and its difference, apart (for the item chips) ----------
+import { priceParts } from '../shared/pricing.js';
+
+test('a price and its difference come apart: the figure, and "Same price", "+₹300" or "−₹300"', () => {
+  assert.deepEqual(priceParts({ price: 4999 }, { price: 4999 }), { price: '₹4,999', delta: 'Same price' });
+  assert.deepEqual(priceParts({ price: 5299 }, { price: 4999 }), { price: '₹5,299', delta: '+₹300' });
+  assert.deepEqual(priceParts({ price: 4699 }, { price: 4999 }), { price: '₹4,699', delta: '−₹300' });
+  assert.deepEqual(priceParts({ price: 4999 }, null), { price: '₹4,999', delta: '' });
+  assert.deepEqual(priceParts({}, { price: 4999 }), { price: '', delta: '' });
+});

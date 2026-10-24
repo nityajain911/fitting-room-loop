@@ -12,6 +12,15 @@ export function priceWithDelta(candidate, original) {
   return `${rupees(candidate.price)} (${d > 0 ? '+' : '−'}${rupees(Math.abs(d))})`;
 }
 
+/** The same, in two parts: the figure, and how it compares ("Same price", "+₹300", "−₹300"). For chips that stack them. */
+export function priceParts(candidate, original) {
+  if (!Number.isFinite(candidate?.price)) return { price: '', delta: '' };
+  const price = rupees(candidate.price);
+  if (!Number.isFinite(original?.price)) return { price, delta: '' };
+  const d = candidate.price - original.price;
+  return { price, delta: d === 0 ? 'Same price' : `${d > 0 ? '+' : '−'}${rupees(Math.abs(d))}` };
+}
+
 /**
  * Did the customer decline an alternative that cost more than what it was brought for? Each declined item is compared
  * with the item of theirs it was chosen for (else the one they asked about). `get` looks an article up by id.

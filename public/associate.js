@@ -1,19 +1,19 @@
 // Screen 2 — associate (fitting-room runner / floor associate).
 import {
   S, hooks, handlers, api, act, esc, now, toast, timerHtml, fmtDur, outcomeLabel, itemName,
-  methodLabel, reasonLabel, roleLabel, issuesText, openAttr, STAGE_TEXT, ringHtml, rackPill,
+  methodLabel, reasonLabel, roleLabel, issuesText, openAttr, STAGE_TEXT, roomSquare, rackPill,
   pairedId, setPaired, rosterOn, me,
 } from './core.js';
 import { tripItemName } from '/shared/visuals.js';
 import { skillLabel } from '/shared/skills.js';
 import { accessFor } from '/shared/staffing.js';
-import { suggestionItemIds, optionFor, choiceSummary } from '/shared/fitMatch.js';
+import { suggestionItemIds, optionFor } from '/shared/fitMatch.js';
 import { buildQueue, buildAssistQueue, recentlyClosed } from '/shared/routing.js';
 import { isOpen, ownerRole, STAGE_LABEL, effectiveCatalogue } from '/shared/derive.js';
 import { mergeIssue } from '/shared/fitMatch.js';
 import { CATALOGUE, getSku, priceLabel, MEASURE_LABELS } from '/shared/catalogue.js';
 import { carryoverFor } from '/shared/carryover.js';
-import { priceWithDelta, declinedPricier } from '/shared/pricing.js';
+import { priceParts, priceWithDelta, declinedPricier } from '/shared/pricing.js';
 import { STYLE_AXIS_LABELS, styleKind, ISSUES, FIT_ISSUES, CHIPS_BY_KIND, toggleIssue } from '/shared/events.js';
 import { RESTOCK_KINDS, SAVE_OUTCOMES, OUTCOMES, REASON_TAGS, REASON_LABELS, EVIDENCE_TYPES, QUICK_REASONS } from '/shared/events.js';
 
@@ -203,8 +203,8 @@ export function render({ args }) {
   // With a roster the person is fixed by their code: no role tabs, and their sections are shown, not editable.
   const header = who ? identityBar(who) : `
     <div class="seg" role="tablist">
-      <a href="#associate/runner" class="${role === 'runner' ? 'on' : ''}">Fitting-room runner</a>
-      <a href="#associate/floor" class="${role === 'floor' ? 'on' : ''}">Floor associate</a>
+      <a href="#associate/runner" class="${role === 'runner' ? 'on' : ''}">Runner</a>
+      <a href="#associate/floor" class="${role === 'floor' ? 'on' : ''}">Floor</a>
     </div>`;
   const id = args[1];
   if (id) {
@@ -241,32 +241,37 @@ const statusPill = (x) => {
 
 /** What the attempt in progress is about: the items the customer named, and what is wrong with them. */
 const issuesNow = (x) => ((x.cur ?? x).issues || []).includes('check_stock') ? 'Check stock' : issuesText(x.cur ?? x); // a task for the floor, not the customer's own phrase
-const itemNow = (x) => (x.cur?.skuIds ?? [x.skuId]).map(itemName).join(' + ');
 const curSku = (x) => getSku((x.cur?.skuIds ?? [x.skuId])[0]);
 const attemptPill = (x) => (x.round > 1 ? `<span class="pill accent">Attempt ${x.round}</span>` : '');
 /** The item of the customer's that a brought item was chosen for. */
 const baseFor = (r, o, s = r.suggestion) => getSku(s ? optionFor(s, o.id)?.forId : null) || getSku(r.baseOf?.[o.id]) || curSku(r);
 /** An item's price beside what the customer has on, and a note when it is outside the usual price band. */
-const priceNote = (r, o, s = r.suggestion) => `<span class="price">${esc(priceWithDelta(o, baseFor(r, o, s)))}</span>${s && optionFor(s, o.id)?.outsideBand ? ' <span class="pill warn">Outside usual price range</span>' : ''}`;
+const priceNote = (r, o, s = r.suggestion) => {
+  const p = priceParts(o, baseFor(r, o, s));
+  return `<span class="price">${esc(p.price)}${p.delta ? ` · ${esc(p.delta)}` : ''}</span>${s && optionFor(s, o.id)?.outsideBand ? ' <span class="pill warn">Outside usual price range</span>' : ''}`;
+};
+/** One line for a queue card: size and cut first, so they are never the part that gets cut off. */
+const shortItem = (id) => { const s = getSku(id); return s ? `${s.department === 'Women' ? "Women's " : ''}${s.size} ${s.cut} · ${s.name} · ${s.colour}` : '–'; };
+const itemShort = (x) => (x.cur?.skuIds ?? [x.skuId]).map(shortItem).join(' + ');
 /** The customer's own items with their prices, for the header. */
 const itemPriced = (x) => (x.cur?.skuIds ?? [x.skuId]).map((id) => `${itemName(id)}${getSku(id)?.price ? ` · ${priceLabel(getSku(id))}` : ''}`).join(' + ');
 
 
 function assistCard(x) {
-  const what = x.kind === 'task' ? 'Floor stock pull' : `${issuesNow(x)} · ${itemNow(x)}`;
-  return `<div class="card urgent qcard">${ringHtml(x, 52)}<div class="qmain">
-    <div class="row"><strong>Room ${esc(x.room)}</strong>${timerHtml(x, 'plain')}</div>
-    <div class="small">${esc(what)}</div>
+  const what = x.kind === 'task' ? 'Floor stock pull' : `${issuesNow(x)} · ${itemShort(x)}`;
+  return `<div class="card urgent qcard oq">${roomSquare(x)}<div class="qmain">
+    <div class="l1"><strong>Room ${esc(x.room)}</strong>${timerHtml(x, 'pill')}</div>
+    <div class="l2">${esc(what)}</div>
     <button class="btn primary block pulse" style="margin-top:8px" data-action="a-assist" data-v="${esc(x.id)}">Assist — Room ${esc(x.room)}</button>
   </div></div>`;
 }
 
 /** An escalated item in your own queue: only who, where and how long. Tap to act. */
 function urgentCard(x) {
-  const what = x.kind === 'task' ? `Floor pull · ${(x.items || []).length > 1 ? `${x.items.length} items` : itemName(x.itemId)}` : `${issuesNow(x)} · ${itemNow(x)}`;
-  return `<div class="card tap urgent qcard" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x, 52)}<div class="qmain">
-    <div class="row"><strong>Room ${esc(x.room)}</strong>${timerHtml(x, 'plain')}</div>
-    <div class="small">${esc(what)} <span class="muted">· ${esc(stageText(x))}</span></div>${roomBadge(x) ? `<div class="pills">${roomBadge(x)}</div>` : ''}</div><span class="open-cta">Open ›</span></div>`;
+  const what = x.kind === 'task' ? `Floor pull · ${(x.items || []).length > 1 ? `${x.items.length} items` : itemName(x.itemId)}` : `${issuesNow(x)} · ${itemShort(x)}`;
+  return `<div class="card tap urgent qcard oq" data-action="a-open" data-v="${esc(x.id)}">${roomSquare(x)}<div class="qmain">
+    <div class="l1"><strong>Room ${esc(x.room)}</strong>${timerHtml(x, 'pill')}</div>
+    <div class="l2">${esc(what)}</div><div class="pills"><span class="pill danger">${esc(stageText(x))}</span>${roomBadge(x)}</div></div></div>`;
 }
 
 /** A small tag for how this item reached this person: as backup, or because it opened to everyone. */
@@ -293,7 +298,7 @@ function queue(role, who) {
     ${offer.length ? `<h2 style="color:var(--danger)">Can you help?</h2>${offer.map(assistCard).join('')}` : ''}
     ${assisting.length ? `<h2>You're assisting</h2>${assisting.map(queueCard).join('')}` : ''}
     ${items.some((x) => x.escalated) ? `<h2 style="color:var(--danger)">Needs you now</h2>${items.filter((x) => x.escalated).map(urgentCard).join('')}` : ''}
-    <h1>${esc(roleLabel(role))} queue</h1>
+    <h1>${role === 'runner' ? 'Runner' : 'Floor'} queue</h1>
     ${withTeammates ? `<div class="banner info">${withTeammates} with teammates first</div>` : ''}
     ${items.some((x) => !x.escalated) ? items.filter((x) => !x.escalated).map(queueCard).join('') : (items.length ? '' : '<div class="card muted">Nothing waiting</div>')}
     ${closed.length ? `<h2>Recently finished</h2>${closed.map((r) => `
@@ -318,15 +323,15 @@ function queueCard(x) {
   const cls = x.escalated ? 'esc' : '';
   if (x.kind === 'task') {
     const racks = [...new Set((x.items || []).map((i) => i.rack))].sort();
-    return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
-      <div class="row"><strong>${x.taskType === 'restock' ? esc(taskTitle(x)) : `Pull → Room ${esc(x.room)}`}</strong>${timerHtml(x, 'plain')}</div>
-      <div class="small muted">${(x.items || []).length > 1 ? `${x.items.length} items` : esc(itemName(x.itemId))}</div>
+    return `<div class="card tap qcard oq ${cls}" data-action="a-open" data-v="${esc(x.id)}">${roomSquare(x)}<div class="qmain">
+      <div class="l1"><strong>${x.taskType === 'restock' ? esc(taskTitle(x)) : `Pull → Room ${esc(x.room)}`}</strong>${timerHtml(x, 'pill')}</div>
+      <div class="l2">${(x.items || []).length > 1 ? `${x.items.length} items` : esc(itemName(x.itemId))}</div>
       <div class="pills">${x.taskType === 'restock' ? '<span class="pill accent">From the manager</span>' : ''}${racks.map((k) => rackPill(k)).join('')}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
   }
   const target = x.suggestion?.itemId ? getSku(x.suggestion.itemId) : null;
-  return `<div class="card tap qcard ${cls}" data-action="a-open" data-v="${esc(x.id)}">${ringHtml(x)}<div class="qmain">
-    <div class="row"><strong>${esc(issuesNow(x))}</strong>${timerHtml(x, 'plain')}</div>
-    <div class="small muted">${esc(itemNow(x))}</div>
+  return `<div class="card tap qcard oq ${cls}" data-action="a-open" data-v="${esc(x.id)}">${roomSquare(x)}<div class="qmain">
+    <div class="l1"><strong>${esc(issuesNow(x))}</strong>${timerHtml(x, 'pill')}</div>
+    <div class="l2">${esc(itemShort(x))}</div>
     <div class="pills">${roomBadge(x)}${attemptPill(x)}${carryover(x) ? '<span class="pill accent">💡 Fit carryover</span>' : ''}${target ? rackPill(target.rack) : ''}${tierPill(x, me())}${escPill(x)}${statusPill(x)}</div></div></div>`;
 }
 
@@ -357,7 +362,7 @@ function taskBar(t, doneLabel) {
 
 function restockDetail(t) {
   return `
-    <div class="head">${ringHtml(t, 56)}<div><h1>${esc(taskTitle(t))}</h1>${timerHtml(t, 'plain')}</div></div>
+    <div class="head">${roomSquare(t, true)}<div class="hmain"><h1>${esc(taskTitle(t))}</h1></div>${timerHtml(t, 'pill')}</div>
     <div class="card stack">
       <div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(t.skuId))}</strong>${rackPill(t.rack)}</div></div></div>
       <div class="small">${esc(RESTOCK_HELP[t.restockKind] || '')}</div>
@@ -368,7 +373,7 @@ function restockDetail(t) {
 function taskDetail(t) {
   if (t.taskType === 'restock') return restockDetail(t);
   return `
-    <div class="head">${ringHtml(t, 56)}<div><h1>Floor stock pull</h1>${timerHtml(t, 'plain')}</div></div>
+    <div class="head">${roomSquare(t, true)}<div class="hmain"><h1>Floor stock pull</h1></div>${timerHtml(t, 'pill')}</div>
     <div class="card stack">
       ${[...(t.items || [])].sort((a, b) => String(a.rack).localeCompare(String(b.rack))).map((i) => `<div class="optrow"><div class="optmain"><div class="bring-line"><strong>${esc(itemName(i.itemId))}</strong>${rackPill(i.rack)}</div></div></div>`).join('')}
       <div>Take to Room ${esc(t.room)}</div>
@@ -423,7 +428,7 @@ function requestDetail(r, role) {
   const c = carryover(r);
   const n = r.deliveredIds.length;
   return `
-    <div class="head">${ringHtml(r, 56)}<div><h1>Room ${esc(r.room)}</h1>${timerHtml(r, 'plain')}${isOpen(r) && r.escalated ? ' <span class="esc-tag">ESCALATED</span>' : ''}</div></div>
+    <div class="head">${roomSquare(r, true)}<div class="hmain"><h1>Room ${esc(r.room)}</h1>${isOpen(r) && r.escalated ? '<span class="esc-tag">ESCALATED</span>' : ''}</div>${timerHtml(r, 'pill')}</div>
     <div class="summary"><strong>${esc(issuesNow(r))}</strong> · ${esc(itemPriced(r))} ${attemptPill(r)}${info.conflicts.length ? ' <span class="pill warn">⚠ Check</span>' : ''}${statusPill(r)}</div>
     ${p ? `<div class="small muted">${r.cur.method === 'rule_fallback' ? '⚙' : '✨'} “${esc(p.summary_en)}”</div>` : ''}
     ${escBanner(r)}
@@ -487,7 +492,6 @@ const reported = (id) => S.derived.discrepancies?.[id] || 0;
 const stockNow = (id) => Math.max(0, onRecord(id) - reported(id));
 
 /** Say plainly what kind of change this is, so a style change cannot be mistaken for a size change (or the reverse). */
-const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
 function changeBanner(s, sku, alt) {
   if (s.kind === 'alternative_style' && s.change?.type === 'design') {
@@ -560,13 +564,12 @@ function suggestionBlock(r, sku, role, compact = false) {
       body += `<div class="banner info"><strong>${esc(itemName(n.forId))}:</strong> ${esc(n.reason)}</div>`; // a picked item with nothing in stock
     }
     body += opts.map((o) => {
-      const why = choiceSummary(optionFor(s, o.id));
-      return `<div class="optrow ${canAct && !sel.has(o.id) ? 'off' : ''}">
+      return `<div class="optrow orow ${canAct && !sel.has(o.id) ? 'off' : ''}">
         ${canAct ? `<input type="checkbox" class="optbox" aria-label="Bring ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-toggle" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${sel.has(o.id) ? 'checked' : ''}>` : ''}
-        <div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack, `${stockNow(o.id)} left`)}</div>
-          ${reported(o.id) ? `<div class="small muted">${reported(o.id)} reported missing</div>` : ''}
-          ${why && opts.length > 1 ? `<div class="small">${esc(cap1(why))}</div>` : ''}</div>
-        ${isOpenReq && !r.itemDeclined && r.deliveredTs == null && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}
+        <div class="optmain"><div class="oname">${esc(optionName(baseFor(r, o, s) || sku, o))}</div><div class="oprice">${priceNote(r, o, s)} · ${stockNow(o.id)} left</div>
+          ${reported(o.id) ? `<div class="small muted">${reported(o.id)} reported missing</div>` : ''}</div>
+        <div class="rk">${rackPill(o.rack, '', true)}
+        ${isOpenReq && !r.itemDeclined && r.deliveredTs == null && ['shown', 'confirmed'].includes(r.suggestionState) ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}</div>
       </div>`;
     }).join('');
     if (opts.length > 1 && s.kind === 'alternative_style') {
@@ -604,9 +607,9 @@ function suggestionBlock(r, sku, role, compact = false) {
     const key = `sugg:${r.id}`;
     return `<h2>${r.deliveredTs != null ? 'Brought' : 'On the way'}</h2><div class="card well ${isFallback ? 'fallback-card' : ''}">
       ${fallbackHead}
-      ${trip.map((o) => `<div class="optrow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="bring-line"><span><strong>${esc(optionName(baseFor(r, o, s) || sku, o))}</strong> ${priceNote(r, o, s)}</span>${rackPill(o.rack)}</div>
-</div>
-        ${r.deliveredTs == null ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}</div>`).join('')}
+      ${trip.map((o) => `<div class="optrow orow ${r.deliveredTs == null && got.has(o.id) ? 'off' : ''}">${r.deliveredTs == null ? `<input type="checkbox" class="optbox" aria-label="Picked ${esc(optionName(baseFor(r, o, s) || sku, o))}" data-action="a-pick" data-id="${esc(r.id)}" data-v="${esc(o.id)}" ${got.has(o.id) ? 'checked' : ''}>` : ''}<div class="optmain"><div class="oname">${esc(optionName(baseFor(r, o, s) || sku, o))}</div><div class="oprice">${priceNote(r, o, s)}</div></div>
+        <div class="rk">${rackPill(o.rack, '', true)}
+        ${r.deliveredTs == null ? `<button class="btn small-btn" data-action="a-next-best" data-v="${esc(r.id)}" data-cause="not_on_rack" data-item="${esc(o.id)}">Not on rack</button>` : ''}</div></div>`).join('')}
       ${struckHtml}
       <details class="sec" data-sec="${esc(key)}" ${openAttr(key, false)}><summary>Measurements</summary>${trip.length ? comparisons(r, s, trip, sku) : ''}</details>
       ${tasks}

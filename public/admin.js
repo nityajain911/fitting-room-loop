@@ -75,8 +75,8 @@ export function render() {
   const body = { team: teamSection, timing: timingTab, devices: tabletLinks, data: dataTab, demo: demoControls }[tab];
   return `
     <a class="link" href="#manager">‹ Manager dashboard</a>
-    <h1>Admin</h1>
-    <div class="seg" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="${tab === k ? 'on' : ''}" aria-selected="${tab === k}" data-action="m-tab" data-v="${k}">${l}</button>`).join('')}</div>
+    <h1 class="hd1">Admin</h1>
+    <div class="ntabs" role="tablist">${tabs.map(([k, l], i) => `<button type="button" role="tab" class="${tab === k ? 'on' : ''}" aria-selected="${tab === k}" data-action="m-tab" data-v="${k}"><em>${String(i + 1).padStart(2, '0')}</em>${l}</button>`).join('')}</div>
     ${body()}`;
 }
 

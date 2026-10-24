@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI direction — layouts for approval</title>
+<style>
+:root{
+  --ink:#0f1115; --ink-2:#4b5563; --ink-3:#8b93a1; --line:#e3e7ec; --paper:#ffffff; --canvas:#e9edf0; --mist:#cfdbe2;
+  --ok:#16a34a; --ok-bg:#dcfce7; --warn:#d97706; --warn-bg:#fef3c7; --bad:#dc2626; --bad-bg:#fee2e2; --card-dark:#12151a;
+  --r-card:26px; --r-in:16px;
+  font-family:-apple-system,"SF Pro Display","Inter","Segoe UI",system-ui,sans-serif; font-variant-numeric:tabular-nums;
+}
+*{box-sizing:border-box} body{margin:0;background:#dfe4e8;color:var(--ink);padding:32px 20px 80px}
+.wrap{max-width:1180px;margin:0 auto}
+h1.page{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);font-weight:600;margin:0 0 6px}
+p.sub{margin:0 0 28px;color:var(--ink-2);font-size:15px;max-width:720px;line-height:1.5}
+.sec-t{display:flex;align-items:baseline;gap:12px;margin:48px 0 14px}
+.sec-t b{font-size:12px;letter-spacing:.14em;color:var(--ink-3);font-weight:600}
+.sec-t h2{margin:0;font-size:20px;font-weight:700;letter-spacing:-.01em}
+.note{font-size:13px;color:var(--ink-2);margin:10px 2px 0;line-height:1.45;max-width:520px}
+.row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+
+/* ---------- style guide ---------- */
+.guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.g{background:var(--paper);border-radius:22px;padding:18px 20px}
+.g small{display:block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:12px}
+.sw{display:flex;gap:8px;flex-wrap:wrap}.sw i{width:38px;height:38px;border-radius:12px;display:block;border:1px solid rgba(0,0,0,.08)}
+.spec .big{font-size:34px;line-height:1;letter-spacing:-.03em;text-transform:uppercase}
+.spec .big b{font-weight:800}.spec .big span{font-weight:200}
+.bt{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* ---------- shared bits ---------- */
+.up{text-transform:uppercase}
+.lbl{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin:16px 0 8px}
+.h{font-size:30px;line-height:.98;letter-spacing:-.035em;text-transform:uppercase;margin:6px 0 4px}
+.h b{font-weight:800;display:block}.h span{font-weight:200;display:block}
+.pill{display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 16px;border-radius:999px;background:#fff;border:1px solid var(--line);font-size:14px;font-weight:500;white-space:nowrap}
+.pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.pill.sm{height:30px;padding:0 12px;font-size:12.5px}
+.sq{width:44px;height:44px;border-radius:14px;background:#fff;border:1px solid var(--line);display:inline-grid;place-items:center;font-weight:700;font-size:14px}
+.sq.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.sw-dot{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.22);display:inline-block}
+.pill.on .sw-dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.25),0 0 0 1.5px rgba(255,255,255,.85)}
+.seg{display:flex;background:#e8ecef;border-radius:16px;padding:4px}
+.seg i{flex:1;text-align:center;font-style:normal;font-size:14px;font-weight:600;padding:9px 0;border-radius:12px;color:var(--ink-3)}
+.seg i.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.cta{display:flex;align-items:center;justify-content:center;gap:10px;height:54px;border-radius:999px;background:var(--ink);color:#fff;font-weight:600;font-size:16px;flex:1}
+.cta.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);flex:none;width:54px;font-size:20px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.rack{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px 3px 4px;font-weight:700;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase}
+.rack b{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:11px}
+.rA{background:rgba(59,130,246,.15)}.rA b{background:#3b82f6}.rB{background:rgba(147,51,234,.15)}.rB b{background:#9333ea}.rD{background:rgba(234,88,12,.15)}.rD b{background:#ea580c}
+.dock{display:flex;gap:2px;background:#0f172a;border-radius:999px;padding:5px;width:max-content;margin:0 auto;box-shadow:0 10px 25px rgba(0,0,0,.25)}
+.dock i{font-style:normal;font-size:12.5px;padding:8px 14px;border-radius:999px;color:#94a3b8;position:relative}
+.dock i.on{background:#f8fafc;color:#0f172a;font-weight:600}.dock i u{position:absolute;top:5px;right:6px;width:7px;height:7px;border-radius:50%;background:#f43f5e;box-shadow:0 0 0 2px #0f172a}
+
+/* ---------- device frames ---------- */
+.dev{background:#0c0e12;border-radius:40px;padding:11px;box-shadow:0 18px 40px rgba(15,17,21,.22)}
+.dev .scr{border-radius:30px;overflow:hidden;position:relative;height:100%}
+.phone{width:316px}.phone .scr{height:640px}
+.tablet{width:560px;border-radius:34px}.tablet .scr{height:860px;border-radius:24px}
+.desk{width:100%;border-radius:22px;padding:9px}.desk .scr{border-radius:14px;height:auto}
+.pad{padding:18px 18px 0}
+.top{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);font-weight:600}
+.cust{background:linear-gradient(180deg,#d3dee5 0,#eef1f3 240px,#f3f4f4 100%)}
+.assoc{background:#eef2f6}.mgr{background:#eef1f4}
+.tab-fix{position:absolute;left:0;right:0;bottom:12px}
+.fadeb{position:absolute;left:0;right:0;bottom:0;height:190px;background:linear-gradient(180deg,rgba(243,244,244,0),#f3f4f4 40%)}
+.step{display:flex;align-items:flex-start}.step div{flex:1;text-align:center;position:relative;font-size:9px;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.step div::before{content:"";position:absolute;top:13px;left:-50%;right:50%;height:2px;background:var(--line)}.step div:first-child::before{display:none}
+.step div.d::before{background:var(--ok)}
+.step i{position:relative;z-index:1;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--line);display:grid;place-items:center;margin:0 auto 6px;font-style:normal;font-size:11px;color:var(--ink-3)}
+.step div.d i{background:var(--ok);border-color:var(--ok);color:#fff}.step div.d{color:var(--ink)}
+.step div.cur i{box-shadow:0 0 0 0 rgba(22,163,74,.5);animation:pu 1.8s infinite}
+@keyframes pu{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 9px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
+.card{background:#fff;border-radius:var(--r-card);padding:16px}
+.chip{background:#fff;border-radius:18px;padding:11px 14px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 0 rgba(0,0,0,.04),0 6px 16px -8px rgba(0,0,0,.18)}
+.chip .dot{width:9px;height:9px;border-radius:50%;background:var(--ink);flex:none}
+.chip b{font-size:14px;font-weight:600;display:block}.chip small{font-size:12px;color:var(--ink-3)}
+.chip .pr{margin-left:auto;text-align:right;font-size:13px;font-weight:600}.chip .pr small{display:block;font-weight:500}
+.q{background:#fff;border-radius:22px;padding:14px;margin-bottom:10px;display:flex;gap:12px;border-left:5px solid var(--ok)}
+.q.w{border-left-color:var(--warn)}.q.e{border-left-color:var(--bad);background:linear-gradient(90deg,#fff1f1,#fff 28%)}
+.ring{width:46px;height:46px;border-radius:50%;border:4px solid #e5e9ee;border-top-color:var(--ok);display:grid;place-items:center;font-weight:700;font-size:16px;flex:none}
+.q.w .ring{border-top-color:var(--warn);border-right-color:var(--warn)}.q.e .ring{border-color:var(--bad)}
+.q h4{margin:0;font-size:16px;display:flex;justify-content:space-between;font-weight:700}.q h4 em{font-style:normal;font-weight:600;color:var(--ink-2);font-size:13.5px}
+.q p{margin:2px 0 6px;font-size:12.5px;color:var(--ink-2);line-height:1.35}
+.tag{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;background:#eef1f4;color:var(--ink-2)}
+.tag.ok{background:var(--ok-bg);color:#166534}.tag.ai{background:#eef2ff;color:#4338ca}.tag.rule{background:var(--warn-bg);color:#92400e}
+.well{background:#f6f8fa;border:1px solid var(--line);border-radius:20px;padding:6px 14px}
+.opt{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}.opt:last-child{border:0}
+.opt .cb{width:20px;height:20px;border-radius:6px;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:12px;flex:none;margin-top:2px}
+.opt h5{margin:0;font-size:15px;font-weight:700}.opt .pr2{font-size:12.5px;color:var(--ink-2);margin-top:1px}
+.facts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.facts span{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 9px;color:var(--ink-2)}
+.facts span b{color:var(--ink);font-weight:700;letter-spacing:.02em;text-transform:none;margin-left:3px}
+.bar{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:12px 14px 70px;display:flex;gap:10px}
+
+/* ---------- manager ---------- */
+.mg{padding:26px 28px 26px}
+.mgh{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px}
+.mgh .h{font-size:44px;margin:0}
+.live{background:var(--card-dark);color:#fff;border-radius:30px;padding:22px 24px;margin:18px 0 14px;display:grid;grid-template-columns:1.2fr 1fr;gap:26px}
+.nums{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.nums div b{font-size:34px;font-weight:300;letter-spacing:-.03em;display:block;line-height:1}.nums div span{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#9aa3b2;font-weight:600}
+.nums .hot b{color:#fbbf24;font-weight:700}.nums .bad b{color:#fb7185;font-weight:700}
+.rooms{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}.rooms i{font-style:normal;width:34px;height:34px;border-radius:11px;display:grid;place-items:center;font-weight:700;font-size:13px;background:#232831;color:#8b93a1}
+.rooms .w{background:#4a3a14;color:#fbbf24}.rooms .a{background:#1d3150;color:#93c5fd}.rooms .t{background:#16a34a;color:#fff}.rooms .e{outline:2px solid #fb7185;outline-offset:1px}
+.team{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.team i{font-style:normal;font-size:12px;border:1px solid #2c3340;border-radius:999px;padding:4px 11px;color:#cbd2de}.team i b{color:#fff;margin-left:4px}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.kpi{background:#fff;border-radius:26px;padding:18px 20px}.kpi small{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.kpi .n{font-size:44px;font-weight:300;letter-spacing:-.04em;line-height:1.05;margin:6px 0 4px}.kpi .n b{font-weight:800}
+.bars{display:flex;height:16px;border-radius:999px;overflow:hidden;margin:6px 0 12px}.bars i{display:block}
+.leg{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:12.5px;color:var(--ink-2)}.leg span{display:flex;align-items:center;gap:7px}.leg u{width:10px;height:10px;border-radius:3px;display:inline-block}
+.leg em{font-style:normal;background:#eef1f4;border-radius:999px;padding:1px 8px;font-weight:700;color:var(--ink);margin-left:auto}
+.two{display:grid;grid-template-columns:1fr 1.15fr;gap:14px;margin-top:14px}
+.heat{display:grid;grid-template-columns:130px repeat(3,1fr);gap:5px;font-size:12px;align-items:center}
+.heat .c{height:42px;border-radius:12px;display:grid;place-items:center;text-align:center;line-height:1.1;font-weight:800;font-size:15px}
+.heat .c small{display:block;font-size:9.5px;font-weight:600;letter-spacing:.02em}.heat .m{color:#cbd5e1;background:#f3f5f7;font-weight:400}
+.heat .h1{background:rgba(224,90,67,.35)}.heat .h2{background:#c2412d;color:#fff}.heat .l{background:rgba(20,150,150,.4)}
+.heat .hd{text-align:center;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.sig{border-top:1px solid var(--line);padding:10px 0;font-size:13px;line-height:1.4}
+.tabs{display:flex;gap:6px;margin:14px 0;flex-wrap:wrap}.tabs i{font-style:normal;font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;padding:9px 16px;border-radius:999px;background:#fff;color:var(--ink-2)}
+.tabs i em{font-style:normal;color:var(--ink-3);margin-right:6px}.tabs i.on{background:var(--ink);color:#fff}.tabs i.on em{color:#9aa3b2}
+.tl{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 16px}.tl div{background:#fff;border-radius:18px;padding:10px 14px;font-size:12px;color:var(--ink-2)}.tl b{display:block;font-size:17px;color:var(--ink);font-weight:700}
+.trow{display:flex;justify-content:space-between;align-items:center;background:#fff;border-radius:18px;padding:12px 16px;margin-bottom:8px;font-size:14px;font-weight:600}
+.trow span{font-weight:500;color:var(--ink-2);font-size:13px}
+.inp{border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-weight:700;min-width:76px;text-align:right;margin-right:8px;display:inline-block}
+
+/* ---------- operational variant (runner and floor) ---------- */
+.op .lbl{font-size:12.5px;color:#374151;letter-spacing:.08em;font-weight:700;margin:12px 0 6px}
+.op .t1{font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.05;margin:10px 0 8px}
+.op .seg{border-radius:12px}.op .seg i{font-size:14px;color:#4b5563}.op .seg i.on{color:var(--ink)}
+.oq{background:#fff;border-radius:16px;padding:10px 12px;margin-bottom:8px;display:flex;gap:11px;align-items:center;border-left:6px solid var(--ok)}
+.oq.w{border-left-color:var(--warn)}.oq.e{border-left-color:var(--bad)}
+.rm{width:48px;height:48px;border-radius:12px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:800;font-size:23px;flex:none}
+.oq .mid{flex:1;min-width:0}.oq .l1{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:16px}
+.tm{font-weight:800;font-size:15px;padding:2px 9px;border-radius:999px;background:var(--ok-bg);color:#166534}
+.oq.w .tm{background:var(--warn-bg);color:#92400e}.oq.e .tm{background:var(--bad-bg);color:#991b1b}
+.oq .l2{font-size:13.5px;color:#374151;margin:2px 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oq .l3{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.owell{background:#f3f6f9;border-radius:14px;padding:2px 12px;border:1px solid #dde3ea}
+.orow{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid #dde3ea}.orow:last-child{border:0}
+.orow .cb{width:24px;height:24px;border-radius:7px;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:14px;flex:none}
+.orow h5{margin:0;font-size:15.5px;font-weight:800;line-height:1.2}.orow p{margin:1px 0 0;font-size:13.5px;color:#374151}
+.orow .rk{margin-left:auto;text-align:right;flex:none}
+.obar{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 12px 62px;display:flex;gap:10px}
+.mm .mg{padding:20px 22px 22px}
+.esc{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
+.ec{background:#fff;border-radius:18px;padding:12px 14px;border-left:6px solid var(--bad);background:linear-gradient(90deg,#fff1f1,#fff 30%)}
+.ec div{display:flex;justify-content:space-between;font-weight:800;font-size:15px}.ec em{font-style:normal;color:#b91c1c}.ec small{display:block;font-size:12.5px;color:#4b5563;margin-top:3px}
+.mm .live{margin:12px 0;padding:18px 20px;border-radius:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="page">Layouts for approval · revised</h1>
+  <p class="sub">A proposed look for the prototype, borrowing the shapes, type and restraint of the reference site. Nothing here changes what the screens do or how many words they use. Real prototype content throughout. Green, amber and red stay reserved for time and stock.</p>
+
+  <div class="sec-t"><b>00</b><h2>The style, in one strip</h2></div>
+  <div class="guide">
+    <div class="g"><small>Colour</small>
+      <div class="sw"><i style="background:#0f1115"></i><i style="background:#ffffff"></i><i style="background:#e9edf0"></i><i style="background:#cfdbe2"></i><i style="background:#16a34a"></i><i style="background:#d97706"></i><i style="background:#dc2626"></i></div>
+      <div class="note">Ink and white lead. Green, amber, red only for state. The old navy accent goes.</div></div>
+    <div class="g spec"><small>Type</small>
+      <div class="big"><b>Fitting</b><br><span>room</span></div>
+      <div class="note">Heavy and ultra-light caps on titles only. Numbers, buttons and prices stay regular weight.</div></div>
+    <div class="g"><small>Shapes</small>
+      <div class="bt"><span class="pill on">Send request</span><span class="pill">Secondary</span><span class="sq on">M</span><span class="sq">L</span></div>
+      <div class="note">Black pill for the one main action. White pill for the rest. Radius 26 on cards.</div></div>
+  </div>
+
+  <div class="sec-t"><b>01</b><h2>Customer</h2></div>
+  <div class="row">
+    <div>
+      <div class="dev tablet"><div class="scr cust">
+        <div class="pad">
+          <div class="top"><span>Fitting-room request loop</span><span>Admin</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:6px"><div class="h"><b>What's not</b><span>working?</span></div><span class="tag" style="background:#fff">Anonymous</span></div>
+          <div class="seg" style="margin-top:10px"><i class="on">Men's</i><i>Women's</i></div>
+          <div class="lbl">01 · Garment</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="pill on">Oxford Shirt</span><span class="pill">Poplin Shirt</span><span class="pill">Polo</span><span class="pill">Chinos</span><span class="pill">Jeans</span></div>
+          <div class="lbl">02 · Colour</div>
+          <div style="display:flex;gap:8px"><span class="pill on"><i class="sw-dot" style="background:#fff"></i>White</span><span class="pill"><i class="sw-dot" style="background:#b8d4ee"></i>Light Blue</span><span class="pill"><i class="sw-dot" style="background:#1f2f55"></i>Navy</span></div>
+          <div class="lbl">03 · Size</div>
+          <div style="display:flex;gap:8px"><span class="sq">S</span><span class="sq on">M</span><span class="sq">L</span><span class="sq">XL</span><span class="sq">XXL</span></div>
+          <div class="lbl">04 · Cut</div>
+          <div class="seg"><i class="on">Slim</i><i>Regular</i></div>
+          <div class="lbl">05 · What's the issue?</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="pill on">Too tight</span><span class="pill">Too loose</span><span class="pill">Too long</span><span class="pill">Too short</span><span class="pill">Another size</span><span class="pill">Another style</span></div>
+          <div class="lbl">Where? · optional</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="pill on">Waist</span><span class="pill">Chest</span><span class="pill">Shoulders</span><span class="pill">Sleeves</span></div>
+        </div>
+        <div class="fadeb"></div>
+        <div style="position:absolute;left:18px;right:18px;bottom:64px;text-align:center">
+          <div style="font-size:12.5px;font-weight:600;margin-bottom:8px">White Oxford Shirt (Button-down · Solid) · M Slim · ₹4,999</div>
+          <div style="display:flex"><div class="cta">Send request <span style="font-size:18px">→</span></div></div>
+        </div>
+        <div class="tab-fix"><div class="dock"><i class="on">Customer</i><i>Associate<u></u></i><i>Manager</i></div></div>
+      </div></div>
+      <div class="note">Tablet, in the room. Mixed-weight title, numbered sections, controls that look like their kind (pills, squares, a segmented bar), swatch dots on colour, and one black pill to send. The dock only appears in the demo, not on a locked tablet.</div>
+    </div>
+
+    <div>
+      <div class="dev phone"><div class="scr cust">
+        <div class="pad">
+          <div class="top"><span>Fitting-room request loop</span><span>Admin</span></div>
+          <div class="card" style="margin-top:12px">
+            <div class="step"><div class="d"><i>1</i>Requested</div><div class="d"><i>2</i>Accepted</div><div class="d cur"><i>3</i>On the way</div><div><i>4</i>Resolved</div></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px"><b style="font-size:15px">White Oxford Shirt · M Slim</b><span class="tag">Too tight · Waist</span></div>
+            <div class="lbl" style="margin-top:14px">Bringing 3 items to your room</div>
+            <div style="display:grid;gap:8px">
+              <div class="chip"><span class="dot"></span><div><b>M Regular</b><small>A roomier waist</small></div><div class="pr">₹4,999<small>Same price</small></div></div>
+              <div class="chip"><span class="dot"></span><div><b>Stripe · M Slim · Blue</b><small>A different pattern</small></div><div class="pr">₹5,299<small>+₹300</small></div></div>
+              <div class="chip"><span class="dot"></span><div><b>Poplin · M Slim</b><small>A different fabric</small></div><div class="pr">₹4,699<small>−₹300</small></div></div>
+            </div>
+            <div class="cta" style="margin-top:14px;height:48px;font-size:15px">I've tried them on</div>
+          </div>
+          <div class="pill" style="width:100%;justify-content:center;margin-top:10px;height:44px">+ Request another item</div>
+        </div>
+        <div class="tab-fix"><div class="dock"><i class="on">Customer</i><i>Associate<u></u></i><i>Manager</i></div></div>
+      </div></div>
+      <div class="note">Tracker. Numbered steps with a pulsing current step. Each article is a floating chip with its price and difference. The fit question appears only after "I've tried them on".</div>
+    </div>
+  </div>
+
+  <div class="sec-t"><b>02</b><h2>Runner and floor associate (operational variant)</h2></div>
+  <div class="row op">
+    <div>
+      <div class="dev phone"><div class="scr assoc">
+        <div class="pad" style="padding-top:14px">
+          <div class="top"><span>Runner</span><span>🔔 &nbsp; Admin</span></div>
+          <div class="seg" style="margin-top:8px"><i class="on">Runner</i><i>Floor</i></div>
+          <div class="t1">Runner queue</div>
+          <div class="oq e"><div class="rm">2</div><div class="mid"><div class="l1">Too tight <span class="tm">2:41</span></div><div class="l2">M Slim · Oxford Shirt · White</div><div class="l3"><span class="rack rA mono"><b>A</b>Rack A4</span><span class="tag" style="background:#fee2e2;color:#991b1b">Late</span></div></div></div>
+          <div class="oq w"><div class="rm">4</div><div class="mid"><div class="l1">Too long <span class="tm">1:12</span></div><div class="l2">L Regular · Polo · Red</div><div class="l3"><span class="rack rB mono"><b>B</b>Rack B16</span><span class="tag">Attempt 2</span></div></div></div>
+          <div class="oq"><div class="rm">5</div><div class="mid"><div class="l1">Another style <span class="tm">0:09</span></div><div class="l2">M Slim · Oxford Shirt · White</div><div class="l3"><span class="tag ok">New</span></div></div></div>
+          <div class="oq"><div class="rm">1</div><div class="mid"><div class="l1">Check stock <span class="tm">0:04</span></div><div class="l2">32 Slim · Chinos · Khaki</div><div class="l3"><span class="tag ok">New</span></div></div></div>
+          <div class="oq"><div class="rm">6</div><div class="mid"><div class="l1">Pull → Room 6 <span class="tm">0:02</span></div><div class="l2">3 items</div><div class="l3"><span class="rack rD mono"><b>D</b>D2</span><span class="rack rD mono"><b>D</b>D4</span></div></div></div>
+        </div>
+        <div class="tab-fix"><div class="dock"><i>Customer</i><i class="on">Associate<u></u></i><i>Manager</i></div></div>
+      </div></div>
+      <div class="note">Queue. Five requests visible at once (the first design showed three). A square room number leads each card, the timer is bold and takes the state colour, one line for the item with the size first (so it is never the part that gets cut), and the rack on the next line. Prices are on the detail screen, not the queue. Solid titles, 13.5px text or larger, dark grey on white.</div>
+    </div>
+
+    <div>
+      <div class="dev phone"><div class="scr assoc">
+        <div class="pad" style="padding-top:14px">
+          <div class="top"><span>‹ Back to queue</span><span>🔔</span></div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:10px"><div class="rm" style="width:56px;height:56px;font-size:28px">5</div><div style="flex:1"><div style="font-size:24px;font-weight:800;letter-spacing:-.02em;line-height:1">Room 5</div><div style="font-size:13.5px;color:#374151;margin-top:3px">Accepted</div></div><span class="tm" style="font-size:18px">0:34</span></div>
+          <div style="margin:10px 0 0;font-size:15px;line-height:1.35"><b>Another style</b> · Oxford Shirt · White · M Slim · ₹4,999</div>
+          <div style="margin:6px 0 0"><span class="tag ai">✨ AI Parsed</span> <span class="tag">👤 Tapped</span></div>
+          <div class="lbl">Bring</div>
+          <div class="owell">
+            <div class="orow"><span class="cb">✓</span><div><h5>Stripe · M Slim · Blue</h5><p>₹5,299 · +₹300</p></div><div class="rk"><span class="rack rA mono"><b>A</b>A41</span></div></div>
+            <div class="orow"><span class="cb">✓</span><div><h5>Poplin · M Slim · Sky Blue</h5><p>₹4,699 · −₹300</p></div><div class="rk"><span class="rack rD mono"><b>D</b>D12</span></div></div>
+            <div class="orow"><span class="cb">✓</span><div><h5>Spread · M Slim · White</h5><p>₹5,499 · +₹500</p></div><div class="rk"><span class="rack rA mono"><b>A</b>A22</span></div></div>
+          </div>
+        </div>
+        <div class="obar"><div class="cta" style="height:52px;font-size:16px">Bring all 3</div><div class="cta ghost" style="height:52px;width:52px">⋯</div></div>
+        <div class="tab-fix"><div class="dock"><i>Customer</i><i class="on">Associate<u></u></i><i>Manager</i></div></div>
+      </div></div>
+      <div class="note">Detail. Room number first, the timer as a bold pill, the item and price on one line, and what to grab in a tinted panel with the rack at the right of each row. The facts row is gone. One black pill at the bottom, 52px tall; everything else is behind the ⋯ button.</div>
+    </div>
+  </div>
+
+  <div class="sec-t"><b>03</b><h2>Manager</h2></div>
+  <div class="dev desk mm"><div class="scr mgr"><div class="mg">
+    <div class="mgh"><div style="font-size:28px;font-weight:800;letter-spacing:-.025em">Manager <span style="font-weight:300;color:var(--ink-3)">· Fri 24 Oct, 11:42</span></div><div style="display:flex;gap:8px"><span class="pill sm">Last hour</span><span class="pill sm on">Today</span><span class="pill sm">7 days</span><span class="pill sm">All</span></div></div>
+    <div class="live">
+      <div><div class="nums"><div class="hot"><b>3</b><span>Waiting</span></div><div><b>2:41</b><span>Longest wait</span></div><div><b>1</b><span>In progress</span></div><div><b>4</b><span>Trying on</span></div><div class="bad"><b>2</b><span>Escalated</span></div></div>
+        <div class="rooms"><i class="w e">1</i><i class="a">2</i><i>3</i><i class="w">4</i><i class="t">5</i><i class="t">6</i><i class="w e">7</i><i>8</i></div></div>
+      <div><div class="lbl" style="color:#9aa3b2;margin-top:0">Team</div><div class="team"><i>Runner 1<b>2</b></i><i>Runner 2<b>0</b></i><i>Floor 1<b>1</b></i><i style="opacity:.5">Floor 2<b>0</b></i></div></div>
+    </div>
+    <div class="lbl" style="color:#b91c1c;margin:4px 0 8px">Needs attention · 2</div>
+    <div class="esc">
+      <div class="ec"><div>Room 7 · Check stock <em>4:30</em></div><small>Oxford Shirt · White · L Slim · not accepted in time · nobody has stepped in</small></div>
+      <div class="ec"><div>Room 1 · Too tight <em>12:53</em></div><small>Poplin Shirt · Sky Blue · M Slim · not accepted in time · Floor 1 stepped in</small></div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><small>Issue save rate</small><div class="n"><b>73</b>%</div><span class="tag ok">₹19,796 saved</span></div>
+      <div class="kpi"><small>SLA health</small><div style="margin-top:12px;font-size:13px;color:var(--ink-2)">Accept <b style="float:right;color:var(--ink)">21s</b><div style="height:8px;background:#e8f5ec;border-radius:9px;margin:6px 0 12px"><div style="width:22%;height:8px;background:var(--ok);border-radius:9px"></div></div>Deliver <b style="float:right;color:var(--ink)">14s</b><div style="height:8px;background:#e8f5ec;border-radius:9px;margin-top:6px"><div style="width:15%;height:8px;background:var(--ok);border-radius:9px"></div></div></div></div>
+      <div class="kpi"><small>Not on rack</small><div class="n"><b>1</b></div><span class="tag">1 SKU affected</span></div>
+    </div>
+    <div class="two">
+      <div class="kpi"><small>Where requests ended</small>
+        <div class="bars" style="margin-top:12px"><i style="width:55%;background:#16a34a"></i><i style="width:9%;background:#0d9488"></i><i style="width:9%;background:#3b82f6"></i><i style="width:9%;background:#93c5fd"></i><i style="width:18%;background:#94a3b8"></i></div>
+        <div class="leg"><span><u style="background:#16a34a"></u>Bought alternative<em>6</em></span><span><u style="background:#0d9488"></u>Bought original<em>1</em></span><span><u style="background:#3b82f6"></u>Cross-store order<em>1</em></span><span><u style="background:#93c5fd"></u>Saved for later<em>1</em></span><span><u style="background:#94a3b8"></u>Left<em>2</em></span></div></div>
+      <div class="kpi"><small>Fit issues by garment and body area</small>
+        <div class="heat" style="margin-top:12px"><span></span><span class="hd">Waist</span><span class="hd">Chest</span><span class="hd">No area</span>
+          <b>Oxford · Slim</b><div class="c h2">3<small>3 tight</small></div><div class="c h1">1<small>1 tight</small></div><div class="c m">—</div>
+          <b>Poplin · Regular</b><div class="c m">—</div><div class="c l">1<small>1 loose</small></div><div class="c h1">1<small>1 tight</small></div></div>
+        <div class="sig" style="margin-top:12px"><b>Fit / sizing</b> · Oxford Shirt · White · M Slim: 3 of 4 requests were "Too tight · Waist"</div></div>
+    </div>
+  </div></div></div>
+  <div class="note" style="max-width:none">Desktop. One-line header with the time. The dark live-floor card, then the escalations in red straight under it (the first design left them out), then the figures. Large light-weight numbers stay here, where they are read at a desk.</div>
+
+  <div class="sec-t"><b>04</b><h2>Admin</h2></div>
+  <div class="row">
+    <div style="width:560px;max-width:100%">
+      <div class="dev" style="border-radius:26px;padding:9px"><div class="scr mgr" style="border-radius:18px;padding:22px 22px 26px">
+        <div class="h" style="font-size:30px"><b>Admin</b></div>
+        <div class="tabs"><i><em>01</em>Team</i><i class="on"><em>02</em>Timing</i><i><em>03</em>Devices</i><i><em>04</em>Data</i></div>
+        <div class="lbl" style="margin-top:6px">When nobody picks up a request</div>
+        <div class="tl"><div><b>At once</b>Main person</div><div><b>20 seconds</b>Backup too</div><div><b>40 seconds</b>Everyone</div><div><b>2 minutes</b>Manager alerted</div></div>
+        <div class="trow">Ask the backup person after<span><i class="inp">20</i>s &nbsp;= 20 seconds</span></div>
+        <div class="trow">Ask everyone after another<span><i class="inp">20</i>s &nbsp;= 20 seconds</span></div>
+        <div class="trow">Alert the manager if not accepted within<span><i class="inp">120</i>s &nbsp;= 2 minutes</span></div>
+        <div class="cta" style="height:46px;font-size:14px;flex:none;width:120px;margin-top:12px">Save</div>
+      </div></div>
+      <div class="note">Numbered tabs, the timing strip as floating chips, and each number saying what it comes to.</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

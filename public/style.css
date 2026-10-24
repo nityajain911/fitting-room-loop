@@ -457,3 +457,96 @@ body[data-mode="demo"] .view:has(.actionbar) { min-height: calc(100dvh - 130px);
 /* the summary above the send button sits on a solid band, not on the fade */
 .cta-wrap, body[data-mode="demo"] .cta-wrap { background: linear-gradient(to bottom, transparent, var(--bg) 14px); }
 @media (prefers-color-scheme: dark) { .tabs { border-color: rgba(255, 255, 255, .16); } }
+
+/* =====================================================================================================================
+   Design pass 2: ink and white, mixed-weight titles, floating chips, a dark live-floor card, and an operational runner.
+   Customer and Manager use big rounded shapes; the runner's screens are denser, bolder and easier to read at arm's length.
+   ===================================================================================================================== */
+:root { --accent: #0f1115; --accent-text: #ffffff; --accent-soft: #eef1f4; --blue: #3b82f6; }
+@media (prefers-color-scheme: dark) { :root { --accent: #f3f5f8; --accent-text: #0f1115; --accent-soft: #232a36; } }
+.dot-k.blue { background: var(--blue); } .timeline li.tone-blue { border-left-color: var(--blue); }
+
+/* shapes: pill buttons everywhere; cards big on Customer, Manager and Admin, tighter for the runner */
+.btn, .btn.small-btn { border-radius: 999px; }
+body[data-view="customer"], body[data-view="manager"], body[data-view="admin"] { --radius: 26px; }
+body[data-view="associate"] { --radius: 16px; }
+h2 { font-size: 12.5px; letter-spacing: .1em; }
+
+/* titles: heavy and ultra-light on Customer, one bold line on Manager and Admin, solid on the runner's screens */
+.hd { font-size: 32px; line-height: .98; letter-spacing: -.035em; text-transform: uppercase; margin: 6px 0 4px; }
+.hd b { display: block; font-weight: 800; } .hd span { display: block; font-weight: 200; }
+.hd1 { font-size: 28px; font-weight: 800; letter-spacing: -.025em; margin: 6px 0; }
+.hd1 span { font-weight: 300; color: var(--muted); }
+body[data-view="associate"] h1 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+body[data-view="associate"] h2 { font-size: 12.5px; color: color-mix(in srgb, var(--text) 72%, var(--bg)); font-weight: 700; }
+body[data-view="customer"] { background-image: linear-gradient(180deg, #d3dee5, transparent 280px); background-repeat: no-repeat; }
+@media (prefers-color-scheme: dark) { body[data-view="customer"] { background-image: none; } }
+.cta-wrap .btn { min-height: 54px; font-size: 16px; }
+
+/* customer: the tracker's numbered steps and the floating item chips */
+.hstep .dot { font-size: 11px; font-weight: 700; }
+.hstep li:not(.reached) .dot { color: var(--muted); }
+.hstep .lbl { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.bitem, .bitem:last-of-type { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 0; border-radius: 18px; padding: 11px 14px; margin: 8px 0; box-shadow: 0 1px 0 rgba(0, 0, 0, .04), 0 6px 16px -8px rgba(0, 0, 0, .22); }
+.cdot { width: 9px; height: 9px; border-radius: 50%; background: var(--text); flex: none; }
+.bmain { flex: 1; min-width: 0; }
+.bprice { margin-left: auto; text-align: right; flex: none; }
+.bprice b { display: block; font-size: 14px; font-weight: 700; }
+.bprice small { font-size: 12px; color: var(--muted); }
+
+/* runner: room number first, one line for the item, a bold timer in the colour of its state */
+.rm { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 12px; background: var(--accent); color: var(--accent-text); font-weight: 800; font-size: 23px; }
+.rm-lg { width: 56px; height: 56px; font-size: 28px; }
+.timer.pill { font-weight: 800; font-size: 15px; padding: 2px 10px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); }
+.timer.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.timer.pill.esc { background: var(--danger-soft); color: var(--danger); }
+.timer.pill.done { background: var(--surface-2); color: var(--muted); }
+body[data-view="associate"] .card { padding: 12px 14px; margin: 8px 0; }
+.card.oq { display: flex; gap: 11px; align-items: center; padding: 10px 12px; border-left: 6px solid transparent; }
+.card.oq.sla-ok { border-left-color: var(--ok); } .card.oq.sla-warn { border-left-color: var(--warn); } .card.oq.sla-esc { border-left-color: var(--danger); }
+.oq .l1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 16px; }
+.oq .l2 { font-size: 13.5px; color: color-mix(in srgb, var(--text) 78%, var(--bg)); margin: 2px 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oq .pills { margin-top: 0; }
+.head .hmain { flex: 1; min-width: 0; }
+.head .timer.pill { font-size: 18px; margin-left: auto; }
+.orow { align-items: center; padding: 11px 0; }
+.oname { font-weight: 800; font-size: 15.5px; line-height: 1.2; }
+.oprice { font-size: 13.5px; color: color-mix(in srgb, var(--text) 78%, var(--bg)); margin-top: 1px; }
+.rk { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+.rk .small-btn { margin: 0; min-height: 30px; padding: 2px 10px; font-size: 12.5px; }
+.btn.xl, .bar-dots { min-height: 52px; font-size: 16px; }
+.bar-dots { min-width: 52px; }
+
+/* manager: a dark live-floor card, then bright figure cards */
+.card.live { background: #12151a; color: #fff; border: 1px solid #232831; border-radius: 22px; padding: 18px 20px; }
+.live .lnum b { font-size: 34px; font-weight: 300; letter-spacing: -.03em; color: #fff; }
+.live .lnum span { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: #9aa3b2; font-weight: 600; }
+.live .lnum.hot b { color: #fbbf24; font-weight: 700; } .live .lnum.bad b { color: #fb7185; font-weight: 700; }
+.live .lnum b .timer, .live .lnum b .timer.plain { color: #fff; font-weight: 300; font-size: inherit; background: none; padding: 0; }
+.live .lnum b .timer.plain.warn { color: #fbbf24; } .live .lnum b .timer.plain.esc { color: #fb7185; }
+.live .room { background: #232831; color: #8b93a1; border: 0; }
+.live .room.waiting { background: #4a3a14; color: #fbbf24; } .live .room.accepted { background: #1d3150; color: #93c5fd; }
+.live .room.on_the_way { background: #143a33; color: #5eead4; } .live .room.trying { background: #16a34a; color: #fff; }
+.live .room.esc { outline-color: #fb7185; }
+.live .rlegend { color: #9aa3b2; }
+.live .member { background: transparent; border: 1px solid #2c3340; color: #cbd2de; } .live .member b { color: #fff; margin-left: 4px; }
+.attn-h { color: var(--danger); margin: 4px 0 8px; }
+.ec { background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 9%, transparent), var(--surface) 30%); border-left: 6px solid var(--danger); border-radius: 18px; padding: 12px 14px; }
+.ecl1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 15px; }
+.ec small { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.tile .num { font-weight: 300; font-size: 44px; letter-spacing: -.04em; } .tile .num b { font-weight: 800; }
+.north .tile .num { font-size: 44px; font-weight: 300; }
+.tile .kpi-title strong { font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.flegend span { display: flex; }
+.flegend em { font-style: normal; margin-left: auto; background: var(--surface-2); border-radius: 999px; padding: 1px 9px; font-weight: 700; }
+
+/* admin: numbered tabs */
+.ntabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
+.ntabs button { border: 0; background: var(--surface); color: var(--muted); border-radius: 999px; padding: 9px 16px; font: inherit; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; font-weight: 600; cursor: pointer; }
+.ntabs button em { font-style: normal; margin-right: 6px; opacity: .6; }
+.ntabs button.on { background: var(--accent); color: var(--accent-text); }
+.tl-strip li { border-radius: 18px; }
+.card.oq.urgent, .card.oq.esc { box-shadow: none; border-color: var(--border); }
+.card.oq.urgent { border-left-color: var(--danger); }
+.incoming.bring { background: transparent; border-left: 0; padding: 4px 0 0; }
+.incoming.bring > .small.muted:first-child { letter-spacing: .1em; }

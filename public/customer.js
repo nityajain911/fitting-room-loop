@@ -10,7 +10,7 @@ import { ISSUES, FIT_ISSUES, CHIPS_BY_KIND, STYLE_AXES, STYLE_AXIS_LABELS, style
 import { customerSteps, isOpen } from '/shared/derive.js';
 import { choiceSummary, optionFor, GIRTH_AREAS } from '/shared/fitMatch.js';
 import { tripItemName, waitPhrase } from '/shared/visuals.js';
-import { priceWithDelta } from '/shared/pricing.js';
+import { priceParts } from '/shared/pricing.js';
 import { typicalAcceptMs } from '/shared/metrics.js';
 
 // Each tablet lives in one fitting room, and the customer is never asked which. The prototype runs as Room 1 and does not
@@ -45,6 +45,8 @@ const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 // and square buttons for sizes. A colour pill carries a swatch dot; the name stays beside it.
 const opt = (action, v, label, on, cls = '', swatch = null) =>
   `<button type="button" class="opt ${cls} ${on ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${on}">${swatch ? `<i class="swatch" style="background:${esc(swatch)}"></i>` : ''}${esc(label)}</button>`;
+/** "01 · Garment", "02 · Colour"...: sections are numbered as they appear, so the form reads as a short list of steps. */
+const numbered = () => { let n = 0; return (label) => `${String(++n).padStart(2, '0')} · ${label}`; };
 const segmented = (action, items, current) => `<div class="seg" role="group">${items.map((v) => `<button type="button" class="${current === v ? 'on' : ''}" data-action="${action}" data-v="${esc(v)}" aria-pressed="${current === v}">${esc(v)}</button>`).join('')}</div>`;
 
 handlers['c-dept'] = (el) => {
@@ -233,8 +235,8 @@ function whereView(chips = chipsForForm(), garmentChosen = !!form.name) {
 }
 
 /** What is the issue (and, for "another style", which details), shared by the normal form and the follow-up. */
-function issueSection(axes) {
-  return `<h2>What's the issue? ${form.issues.some((k) => FIT_ISSUES.includes(k)) ? '<span class="muted" style="text-transform:none;letter-spacing:0">(pick more than one if both apply)</span>' : ''}</h2>
+function issueSection(axes, label = "What's the issue?") {
+  return `<h2>${label} ${form.issues.some((k) => FIT_ISSUES.includes(k)) ? '<span class="muted" style="text-transform:none;letter-spacing:0">(pick more than one if both apply)</span>' : ''}</h2>
     <div class="issue-grid">${Object.entries(ISSUES).map(([k, v]) => opt('c-issue', k, v, form.issues.includes(k))).join('')}</div>
     ${form.issues.includes('another_style') ? `<h2>What would you like different? <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
     <div class="opts">${axes.map((a) => opt('c-style-axis', a, STYLE_AXIS_LABELS[a], form.styleAxes.has(a))).join('')}</div>` : ''}`;
@@ -248,16 +250,17 @@ function followUpView() {
   const chosen = items.includes(form.followItem) ? form.followItem : null;
   const kind = styleKind(getSku(chosen || items[0]).category);
   const ready = !!chosen && form.issues.length > 0 && !form.busy;
+  const step = numbered();
   return `
-    <div class="row"><h1>Which one came closest?</h1><span class="badge-anon">🔒 Anonymous</span></div>
+    <div class="row"><h1 class="hd"><b>Which one</b><span>came closest?</span></h1><span class="badge-anon">🔒 Anonymous</span></div>
     <a class="back-link" href="#customer/${esc(original.id)}">✕ Cancel — back to your request</a>
 
-    <h2>${items.length > 1 ? 'Which item came closest to fitting?' : 'The item we brought'}</h2>
+    <h2>${step(items.length > 1 ? 'Which item came closest to fitting?' : 'The item we brought')}</h2>
     <div class="opts">${items.map((id) => opt('c-pick', id, broughtName(original, id), chosen === id)).join('')}</div>
     ${items.length > 1 ? `<button class="link-btn muted-btn" data-action="c-none-close" data-v="${esc(original.id)}">None came close</button>` : ''}
 
-    ${chosen ? `<h2 style="margin-top:14px">What was still off with the ${esc(broughtName(original, chosen))}?</h2>
-    ${issueSection(STYLE_AXES[kind] || [])}
+    ${chosen ? `<h2 style="margin-top:14px">${step(`What was still off with the ${esc(broughtName(original, chosen))}?`)}</h2>
+    ${issueSection(STYLE_AXES[kind] || [], step('The issue'))}
     ${whereView(CHIPS_BY_KIND[kind === 'trousers' ? 'trousers' : 'top'], true)}
 
     <h2>Add a note <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
@@ -278,20 +281,21 @@ function formView() {
   const next = !form.room ? 'room' : !form.name ? 'garment' : !form.styleName ? 'style' : !form.colour ? 'colour' : !form.size ? 'size' : !form.cut ? 'cut' : !form.issues.length ? 'issue' : null;
   const ready = !next && !form.busy;
   const open = form.room ? roomOpen(form.room) : [];
+  const step = numbered();
   return `
-    <div class="row"><h1>What's not working?</h1><span class="badge-anon">🔒 Anonymous</span></div>
+    <div class="row"><h1 class="hd"><b>What's not</b><span>working?</span></h1><span class="badge-anon">🔒 Anonymous</span></div>
     ${open.length ? `<a class="back-link" href="#customer/${esc(open[open.length - 1].id)}">✕ Cancel — back to your request${open.length > 1 ? 's' : ''}</a>` : ''}
 
     <div class="seg" role="tablist" aria-label="Section">${DEPTS.map(([k, l]) => `<button type="button" class="${form.dept === k ? 'on' : ''}" data-action="c-dept" data-v="${k}">${l}</button>`).join('')}</div>
 
-    <h2>Garment</h2>
+    <h2>${step('Garment')}</h2>
     <div class="opts">${garments(CATALOGUE, form.dept).map((g) => opt('c-garment', g, g, form.name === g)).join('')}</div>
-    ${styles.length > 1 ? `<h2>Style</h2><div class="opts">${styles.map((st) => opt('c-style', st, st, form.styleName === st)).join('')}</div>` : ''}
-    ${form.name && form.styleName && coloursFor(form.name, form.styleName).length > 1 ? `<h2>Colour</h2><div class="opts">${coloursFor(form.name, form.styleName).map((c) => opt('c-colour', c, c, form.colour === c, '', COLOUR_HEX[c])).join('')}</div>` : ''}
-    ${form.colour ? `<h2>Size</h2><div class="opts sizes">${sizes.map((s) => opt('c-size', s, s, form.size === s, 'size')).join('')}</div>` : ''}
-    ${form.size ? `<h2>Cut</h2>${segmented('c-cut', cuts, form.cut)}` : ''}
+    ${styles.length > 1 ? `<h2>${step('Style')}</h2><div class="opts">${styles.map((st) => opt('c-style', st, st, form.styleName === st)).join('')}</div>` : ''}
+    ${form.name && form.styleName && coloursFor(form.name, form.styleName).length > 1 ? `<h2>${step('Colour')}</h2><div class="opts">${coloursFor(form.name, form.styleName).map((c) => opt('c-colour', c, c, form.colour === c, '', COLOUR_HEX[c])).join('')}</div>` : ''}
+    ${form.colour ? `<h2>${step('Size')}</h2><div class="opts sizes">${sizes.map((s) => opt('c-size', s, s, form.size === s, 'size')).join('')}</div>` : ''}
+    ${form.size ? `<h2>${step('Cut')}</h2>${segmented('c-cut', cuts, form.cut)}` : ''}
 
-    ${issueSection(styleAxesForForm())}
+    ${issueSection(styleAxesForForm(), step("What's the issue?"))}
     ${whereView()}
 
     <h2>Add a note <span class="muted" style="text-transform:none;letter-spacing:0">(optional)</span></h2>
@@ -312,7 +316,7 @@ function stepper(r, steps, cancelled) {
   let current = 0;
   steps.forEach((s, i) => { if (s.reached) current = i; });
   return `<ol class="hstep">${steps.map((s, i) => `<li class="${s.reached ? 'reached' : ''} ${i === current && !cancelled ? 'current' : ''} ${i === current && !cancelled && r.status !== 'closed' ? 'pulse' : ''}">
-    <span class="dot">${s.reached ? '✓' : ''}</span><span class="lbl">${esc(s.key === 'on_the_way' && r.deliveredTs != null ? 'Delivered' : SHORT_STEPS[s.key])}</span></li>`).join('')}</ol>`;
+    <span class="dot">${i + 1}</span><span class="lbl">${esc(s.key === 'on_the_way' && r.deliveredTs != null ? 'Delivered' : SHORT_STEPS[s.key])}</span></li>`).join('')}</ol>`;
 }
 
 /** The live "what is coming" box: waiting, checking stock, then every item on the trip. */
@@ -345,8 +349,10 @@ function incoming(r) {
   const item = ({ sku, id }, i) => {
     const base = getSku(r.baseOf?.[id]) || getSku(r.skuId);
     const differs = base && (sku.styleName !== base.styleName || sku.colour !== base.colour); // the header already names the garment
-    return `<div class="bitem"><div class="bline"><strong>${esc(broughtName(r, id))}</strong><span class="price">${esc(priceWithDelta(sku, getSku(r.baseOf?.[id]) || getSku(r.skuId)))}</span></div>
-      ${differs ? `<div class="small muted">${esc(itemName(id))}</div>` : ''}${whys[i] && !(many && same) ? `<div class="small">Chosen for ${esc(whys[i])}</div>` : ''}</div>`;
+    const pp = priceParts(sku, base);
+    return `<div class="bitem"><span class="cdot"></span><div class="bmain"><strong>${esc(broughtName(r, id))}</strong>
+      ${differs ? `<div class="small muted">${esc(itemName(id))}</div>` : ''}${whys[i] && !(many && same) ? `<div class="small muted">${esc(cap(whys[i]))}</div>` : ''}</div>
+      <div class="bprice"><b>${esc(pp.price)}</b><small>${esc(pp.delta)}</small></div></div>`;
   };
   return `<div class="incoming bring">
     <div class="small muted" style="letter-spacing:.6px;font-weight:700">${r.deliveredTs != null ? (many ? `${trip.length} ITEMS DELIVERED` : 'DELIVERED') : (many ? `BRINGING ${trip.length} ITEMS` : 'BRINGING')} TO YOUR ROOM</div>

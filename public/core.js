@@ -123,10 +123,13 @@ export function ringHtml(x, size = 46) {
     <b>${esc(x.room ?? '·')}</b></span>`;
 }
 
+/** The room as a dark square with its number: the first thing a runner's eye lands on. A restock task has no room. */
+export const roomSquare = (x, big = false) => `<span class="rm ${big ? 'rm-lg' : ''}">${esc(x.room ?? (x.taskType === 'restock' ? '↻' : '·'))}</span>`;
+
 /** Rack code as a pill coloured by its aisle, so a runner can see at a glance which aisle to walk to. */
-export function rackPill(rack, note = '') {
+export function rackPill(rack, note = '', short = false) {
   const z = rackZone(rack);
-  return `<span class="rack zone-${esc(z.aisle)}" title="Aisle ${esc(z.aisle)}"><b>${esc(z.aisle)}</b>Rack ${esc(rack)}${note ? ` · ${esc(note)}` : ''}</span>`;
+  return `<span class="rack zone-${esc(z.aisle)}" title="Aisle ${esc(z.aisle)}"><b>${esc(z.aisle)}</b>${short ? '' : 'Rack '}${esc(rack)}${note ? ` · ${esc(note)}` : ''}</span>`;
 }
 
 export function tickTimers() {
@@ -138,8 +141,6 @@ export function tickTimers() {
     let { fraction, tone } = slaRing(ms, marks(el), end != null);
     if (end == null && el.dataset.esc === '1') { fraction = 1; tone = 'esc'; }
     el.className = `ring ${tone}`;
-    const card = el.closest('.card');
-    if (card) { card.classList.remove('sla-ok', 'sla-warn', 'sla-esc'); if (tone !== 'done') card.classList.add(`sla-${tone}`); } // the card's left stripe follows the same clock
     el.querySelector('.rp')?.setAttribute('stroke-dashoffset', String(RING_C * (1 - fraction)));
   });
   document.querySelectorAll('[data-timer]').forEach((el) => {
@@ -152,6 +153,12 @@ export function tickTimers() {
     if (end != null) el.classList.add('done');
     else if (el.dataset.esc === '1' || ms >= m.escalateSeconds * 1000) el.classList.add('esc');
     else if (ms >= m.warnSeconds * 1000) el.classList.add('warn');
+    // A queue card's left stripe follows the same clock as its timer pill.
+    const card = el.classList.contains('pill') ? el.closest('.card') : null;
+    if (card) {
+      card.classList.remove('sla-ok', 'sla-warn', 'sla-esc');
+      if (!el.classList.contains('done')) card.classList.add(el.classList.contains('esc') ? 'sla-esc' : el.classList.contains('warn') ? 'sla-warn' : 'sla-ok');
+    }
   });
 }
 

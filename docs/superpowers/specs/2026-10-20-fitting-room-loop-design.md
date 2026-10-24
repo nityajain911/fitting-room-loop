@@ -435,3 +435,13 @@ Styling and markup only: no change to the engine, data or events, and no new wor
 - **Manager.** The save-rate card shows "₹ saved" as a green pill under the figure. "Where requests ended" is one stacked bar (green: bought alternative, teal: bought original, blue: cross-store or saved for later, grey: left) with a two-column legend. Heatmap cells with three or more reports are bolder; empty cells are a muted dash. The heatmap still shades by direction (needed more or less), not only by count.
 - **Not done, on purpose.** A "+4 cm Waist" pill for the customer (garment measures are not how it feels; the runner has them in the Measurements table), and a square dark room badge in place of the SLA ring.
 
+## 44. Addendum (2026-10-24): design pass 2 (ink and white)
+Approved from `docs/mockups/ui-direction.html`. Styling and markup only: no change to the engine, data or events, and no new words (the runner's "Runner" / "Floor" labels are shorter than before).
+- **Palette.** The navy accent is replaced by ink (white in dark mode), so the one main button, the selected pill and the room number are black. Green, amber and red stay for state only.
+- **Shapes.** Buttons are pills everywhere. Cards have a 26 px radius on Customer, Manager and Admin and 16 px on the runner's screens.
+- **Customer.** A heavy-and-ultra-light title ("WHAT'S NOT / WORKING?"); sections numbered as they appear ("01 · Garment"); the tracker's steps are numbered; each article brought is a floating chip with the price above and "Same price", "+₹300" or "−₹300" below (`priceParts`); the green tint behind them is gone; a soft grey-blue gradient at the top in light mode.
+- **Runner and floor (operational variant).** Room number as a dark square leads each card; the timer is a bold pill in the colour of its state and the card's 6 px left stripe follows the same clock (configured times); one line for the item with the size first (price is on the detail screen, not the queue); solid bold titles, 13.5 px text or larger. The detail has the square badge, a bold timer pill, the summary, and the "Bring" panel with the rack code at the right of each row and the price and stock under the name; the "why this item" line and a facts row were left out. The ring that fills as time passes is no longer used.
+- **Manager.** One-line header with the date; a dark live-floor card (light-weight numbers, dark room squares); the escalations in red directly under it (two lines each); figure cards with light-weight numbers and heavy digits for the save rate; the funnel legend has count chips; heatmap cells with three or more reports, all one way, are solid with white text.
+- **Admin.** Numbered pill tabs.
+- **Not done.** The "FIT / STOCK" facts row (too small to read at arm's length).
+

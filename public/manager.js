@@ -1,7 +1,7 @@
 // Screen 3 — manager dashboard ("store command center"). Only what a store manager acts on, drawn rather than listed.
 // Every number comes from computeMetrics(events). Definitions sit behind a small (i) toggle instead of captions.
 // Settings, demo controls, parser stats, per-SKU detail, the raw event log and "clear data" live on the Admin page.
-import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, pct, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel, now, openAttr } from './core.js';
+import { S, hooks, handlers, api, act, toast, esc, fmtDur, fmtClock, outcomeLabel, reasonLabel, issuesText, itemName, timerHtml, roleLabel, now, openAttr } from './core.js';
 import { computeMetrics } from '/shared/metrics.js';
 import { EVIDENCE_TYPES, FITTING_ROOMS } from '/shared/events.js';
 import { bulletScale, outcomeFunnel, heatCellText, FUNNEL_ORDER } from '/shared/visuals.js';
@@ -52,7 +52,7 @@ export function render() {
   const accept = stageLimits(cfg, 'accept');
   const deliver = stageLimits(cfg, 'deliver');
   return `
-    <div class="mgr-head"><h1>Manager</h1>
+    <div class="mgr-head"><h1 class="hd1">Manager <span>· ${esc(new Date(t).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }))}</span></h1>
       <div class="chips" role="group" aria-label="Time range">${RANGES.map((r) => `<button type="button" class="opt ${range === r.key ? 'on' : ''}" data-action="m-range" data-v="${r.key}" aria-pressed="${range === r.key}">${r.label}</button>`).join('')}</div></div>
     <div class="small muted">Demo data, not store results</div>
 
@@ -61,12 +61,12 @@ export function render() {
 
     <div class="north">
       <div class="tile">${title('save', 'Issue save rate', 'Fitting-room proxy, not store conversion: (bought original + bought alternative + cross-store order) ÷ closed requests. Saved for later and cancelled requests are not counted as saves. The rupee figure adds the sample price of what those requests came to (what was bought, or for a cross-store order what the customer wanted).')}
-        <div class="num">${pct(m.saveRate)}</div>
+        <div class="num">${m.saveRate == null ? '–' : `<b>${Math.round(m.saveRate * 100)}</b>%`}</div>
         <div class="cap">${m.saves} of ${m.closed} closed</div>${m.saves ? `<span class="pill ok kpi-pill">${rupees(m.savedValue)} saved</span>` : ''}</div>
       <div class="tile">${title('sla', 'SLA health', `Median time to accept a request, and median time from accept to the item being on its way, each against its own warning and escalation marks (accept: ${accept.warnSeconds}s / ${accept.escalateSeconds}s, deliver: ${deliver.warnSeconds}s / ${deliver.escalateSeconds}s). The escalation times are prototype settings, set on the Admin page.`)}
         ${bullet('Accept', m.medianAcceptMs, accept, 'Pending first accept')}${bullet('Deliver', m.medianDeliverMs, deliver, 'Pending first delivery')}</div>
       <div class="tile">${title('rack', 'Not on rack', 'Times an associate found a suggested item missing from its rack, meaning the stock record was wrong.')}
-        <div class="num">${m.inventoryDiscrepancies.total}</div>
+        <div class="num"><b>${m.inventoryDiscrepancies.total}</b></div>
         <div class="cap">${plural(m.inventoryDiscrepancies.bySku.length, 'SKU')} affected</div></div>
     </div>
     <div class="statusline">${m.total} requests · ${m.open} waiting · ${m.accepted} in progress · ${m.closed} closed${m.cancelled ? ` · ${m.cancelled} cancelled` : ''} · ${plural(m.escalations, 'escalation')}${m.assists ? ` (${m.assists} picked up)` : ''}${m.routing.recorded ? ` · ${Math.round(m.routing.primaryShare * 100)}% taken by their primary person` : ''}</div>
@@ -109,13 +109,12 @@ function liveView(t) {
 function escalationCards() {
   const items = openEscalations();
   if (!items.length) return '';
-  const card = (x) => `<div class="card attn">
-      <div class="row"><strong>${x.kind === 'task' ? `Floor pull → Room ${esc(x.room)}` : `Room ${esc(x.room)} · ${esc(issuesText(x.cur ?? x))}${x.round > 1 ? ` · attempt ${x.round}` : ''}`}</strong>${timerHtml(x)}</div>
-      <div class="small">${x.kind === 'task' ? `${esc(itemName(x.itemId))} · rack ${esc(x.rack)}` : esc(itemName(x.skuId))}</div>
-      <div class="small muted">${esc(STAGE_LABEL[x.escalatedStage] || 'Escalated')} · ${x.assistedNow ? `${esc(roleLabel(x.assistedBy))} stepped in at ${esc(fmtClock(x.assistedTs))}` : 'nobody has stepped in yet'}</div>
+  const card = (x) => `<div class="ec">
+      <div class="ecl1"><strong>${x.kind === 'task' ? `Floor pull → Room ${esc(x.room)}` : `Room ${esc(x.room)} · ${esc(issuesText(x.cur ?? x))}${x.round > 1 ? ` · attempt ${x.round}` : ''}`}</strong>${timerHtml(x, 'pill')}</div>
+      <small>${x.kind === 'task' ? `${esc(itemName(x.itemId))} · rack ${esc(x.rack)}` : esc(itemName(x.skuId))} · ${esc((STAGE_LABEL[x.escalatedStage] || 'Escalated').toLowerCase())} · ${x.assistedNow ? `${esc(roleLabel(x.assistedBy))} stepped in at ${esc(fmtClock(x.assistedTs))}` : 'nobody has stepped in'}</small>
     </div>`;
   const SHOWN = 4; // the rest are a tap away, so a bad hour does not push everything else off the screen
-  return `<h2 style="color:var(--danger)">Needs attention · ${items.length}</h2><div class="attn-grid">${items.slice(0, SHOWN).map(card).join('')}</div>
+  return `<h2 class="attn-h">Needs attention · ${items.length}</h2><div class="attn-grid">${items.slice(0, SHOWN).map(card).join('')}</div>
     ${items.length > SHOWN ? `<details class="sec" data-sec="attn-more" ${openAttr('attn-more', false)}><summary>${items.length - SHOWN} more</summary><div class="attn-grid">${items.slice(SHOWN).map(card).join('')}</div></details>` : ''}`;
 }
 
@@ -141,7 +140,7 @@ function funnel(m) {
   if (!f.total) return `<div class="card muted">No closed requests yet.${f.cancelled ? ` ${f.cancelled} cancelled.` : ''}</div>`;
   return `<div class="card">
     <div class="funnel" role="img" aria-label="Outcomes of ${f.total} closed requests">${f.segments.map((s) => `<i style="width:${s.pct}%;background:${FUNNEL_COLOURS[s.key]}" title="${esc(outcomeLabel(s.key))}: ${s.count}"></i>`).join('')}</div>
-    <div class="flegend">${FUNNEL_ORDER.map((k) => { const n = m.outcomeMix[k] || 0; return `<span class="${n ? '' : 'zero'}"><i style="background:${FUNNEL_COLOURS[k]}"></i>${esc(outcomeLabel(k))} <strong>${n}</strong>${n ? ` (${Math.round((n / f.total) * 100)}%)` : ''}</span>`; }).join('')}</div>
+    <div class="flegend">${FUNNEL_ORDER.map((k) => { const n = m.outcomeMix[k] || 0; return `<span class="${n ? '' : 'zero'}"><i style="background:${FUNNEL_COLOURS[k]}"></i>${esc(outcomeLabel(k))} <em>${n}${n ? ` · ${Math.round((n / f.total) * 100)}%` : ''}</em></span>`; }).join('')}</div>
     ${f.cancelled ? `<div class="small muted" style="margin-top:6px">+ ${f.cancelled} cancelled by the customer (not part of the bar)</div>` : ''}
   </div>`;
 }
@@ -163,7 +162,8 @@ function heatmap(m, cfg) {
     const bg = c.more && c.less
       ? `linear-gradient(to bottom, rgba(${CORAL}, ${alpha(c.more)}) 50%, rgba(${TEAL}, ${alpha(c.less)}) 50%)`
       : `rgba(${c.more ? CORAL : TEAL}, ${alpha(n)})`;
-    return `<div class="hcell ${n >= 3 ? 'hot' : ''}" style="background:${bg}" title="Needed more: ${c.more} · needed less: ${c.less}"><b>${t.main}</b><small>${esc(t.sub)}</small></div>`;
+    const solid = n >= 3 && (!c.more || !c.less) ? (c.more ? '#c2412d' : '#0f766e') : null; // three or more, all one way: a solid cell with white text
+    return `<div class="hcell ${n >= 3 ? 'hot' : ''}" style="background:${solid ?? bg}${solid ? ';color:#fff' : ''}" title="Needed more: ${c.more} · needed less: ${c.less}"><b>${t.main}</b><small>${esc(t.sub)}</small></div>`;
   };
   const minN = cfg.smallSampleN ?? 5;
   return `<div class="card"><div class="heat" style="grid-template-columns: minmax(104px, 1fr) repeat(${cols.length}, minmax(48px, 64px))">
